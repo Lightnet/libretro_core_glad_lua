@@ -1,3 +1,4 @@
+// module_lua.h
 #ifndef MODULE_LUA_H
 #define MODULE_LUA_H
 
@@ -6,8 +7,11 @@
 #include <lauxlib.h>
 #include <lualib.h>
 
-// Initialize Lua and load script
+// Initialize Lua and load script from file
 bool module_lua_init(void);
+
+// Initialize Lua and load script from memory buffer
+bool module_lua_init_from_buffer(const char *script_data, size_t script_size);
 
 // Deinitialize Lua
 void module_lua_deinit(void);

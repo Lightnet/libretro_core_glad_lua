@@ -55,6 +55,21 @@ static int lua_get_input(lua_State *L) {
     return 1;
 }
 
+// static int lua_load_asset(lua_State *L) {
+//     const char *asset_name = luaL_checkstring(L, 1);
+//     char *asset_data = NULL;
+//     size_t asset_size = 0;
+//     if (extract_asset_from_zip(asset_name, &asset_data, &asset_size)) {
+//         // Return asset data as a Lua string (or process further, e.g., load as texture)
+//         lua_pushlstring(L, asset_data, asset_size);
+//         free(asset_data);
+//         return 1;
+//     }
+//     lua_pushnil(L);
+//     return 1;
+// }
+
+
 bool module_lua_init(void) {
     if (L) {
         core_log(RETRO_LOG_INFO, "Lua already initialized, skipping");
@@ -80,6 +95,7 @@ bool module_lua_init(void) {
     // Register C functions
     lua_register(L, "draw_quad", lua_draw_quad);
     lua_register(L, "get_input", lua_get_input);
+    //lua_register(L, "load_asset", lua_load_asset);
 
     // Load Lua script
     const char *script_path = "script.lua";
@@ -137,4 +153,55 @@ void module_lua_update(float animation_time) {
 
 lua_State *module_lua_get_state(void) {
     return L;
+}
+
+bool module_lua_init_from_buffer(const char *script_data, size_t script_size) {
+    if (L) {
+        core_log(RETRO_LOG_INFO, "Lua already initialized, skipping");
+        return true;
+    }
+
+    core_log(RETRO_LOG_INFO, "Lua init from buffer with input_state_cb: %p", input_state_cb);
+
+    L = luaL_newstate();
+    if (!L) {
+        core_log(RETRO_LOG_ERROR, "Failed to create Lua state");
+        return false;
+    }
+
+    luaL_openlibs(L);
+
+    // Override print function
+    lua_getglobal(L, "_G");
+    lua_pushcfunction(L, lua_core_print);
+    lua_setfield(L, -2, "print");
+    lua_pop(L, 1);
+
+    // Register C functions
+    lua_register(L, "draw_quad", lua_draw_quad);
+    lua_register(L, "get_input", lua_get_input);
+
+    // Load Lua script from buffer
+    if (luaL_loadbuffer(L, script_data, script_size, "script.lua") != LUA_OK || lua_pcall(L, 0, 0, 0) != LUA_OK) {
+        const char *err = lua_tostring(L, -1);
+        core_log(RETRO_LOG_ERROR, "Failed to load Lua script from buffer: %s", err);
+        lua_pop(L, 1);
+        lua_close(L);
+        L = NULL;
+        return false;
+    }
+
+    // Verify update function exists
+    lua_getglobal(L, "update");
+    if (!lua_isfunction(L, -1)) {
+        core_log(RETRO_LOG_ERROR, "No 'update' function found in script");
+        lua_pop(L, 1);
+        lua_close(L);
+        L = NULL;
+        return false;
+    }
+    lua_pop(L, 1);
+
+    core_log(RETRO_LOG_INFO, "Lua initialized and script loaded from buffer");
+    return true;
 }

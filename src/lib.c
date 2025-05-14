@@ -4,6 +4,7 @@
 #include <stdarg.h>
 #include <math.h>
 #include "module_opengl.h"
+#include <miniz.h>
 #include "module_lua.h"
 
 // Framebuffer dimensions
@@ -23,6 +24,7 @@ static bool initialized = false;
 static FILE *log_file = NULL;
 static float animation_time = 0.0f;
 static bool use_default_fbo = false;
+static char zip_file_path[512] = {0}; // Store zip file path
 
 // File-based logging
 static void fallback_log(const char *level, const char *msg) {
@@ -84,6 +86,162 @@ void core_log(enum retro_log_level level, const char *fmt, ...) {
     va_end(args);
 }
 
+
+// Extract script.lua from zip and return its contents
+static bool extract_lua_script(const void *zip_data, size_t zip_size, char **script_data, size_t *script_size) {
+    mz_zip_archive zip_archive;
+    memset(&zip_archive, 0, sizeof(zip_archive));
+
+    // Initialize zip reader
+    if (!mz_zip_reader_init_mem(&zip_archive, zip_data, zip_size, 0)) {
+        core_log(RETRO_LOG_ERROR, "Failed to initialize zip reader");
+        return false;
+    }
+
+    // Find script.lua in the zip
+    int file_index = mz_zip_reader_locate_file(&zip_archive, "script.lua", NULL, 0);
+    if (file_index < 0) {
+        core_log(RETRO_LOG_ERROR, "script.lua not found in zip");
+        mz_zip_reader_end(&zip_archive);
+        return false;
+    }
+
+    // Get file stats
+    mz_zip_archive_file_stat file_stat;
+    if (!mz_zip_reader_file_stat(&zip_archive, file_index, &file_stat)) {
+        core_log(RETRO_LOG_ERROR, "Failed to get script.lua stats");
+        mz_zip_reader_end(&zip_archive);
+        return false;
+    }
+
+    // Allocate memory for script
+    *script_data = (char *)malloc(file_stat.m_uncomp_size + 1);
+    if (!*script_data) {
+        core_log(RETRO_LOG_ERROR, "Failed to allocate memory for script.lua");
+        mz_zip_reader_end(&zip_archive);
+        return false;
+    }
+
+    // Extract script.lua
+    if (!mz_zip_reader_extract_to_mem(&zip_archive, file_index, *script_data, file_stat.m_uncomp_size, 0)) {
+        core_log(RETRO_LOG_ERROR, "Failed to extract script.lua");
+        free(*script_data);
+        *script_data = NULL;
+        mz_zip_reader_end(&zip_archive);
+        return false;
+    }
+
+    (*script_data)[file_stat.m_uncomp_size] = '\0'; // Null-terminate
+    *script_size = file_stat.m_uncomp_size;
+
+    core_log(RETRO_LOG_INFO, "Successfully extracted script.lua (%zu bytes)", *script_size);
+    mz_zip_reader_end(&zip_archive);
+    return true;
+}
+
+// Extract script.lua from zip file at path
+static bool extract_lua_script_from_file(const char *zip_path, char **script_data, size_t *script_size) {
+    mz_zip_archive zip_archive;
+    memset(&zip_archive, 0, sizeof(zip_archive));
+
+    // Initialize zip reader from file
+    if (!mz_zip_reader_init_file(&zip_archive, zip_path, 0)) {
+        core_log(RETRO_LOG_ERROR, "Failed to initialize zip reader for file: %s", zip_path);
+        return false;
+    }
+
+    // Find script.lua in the zip
+    int file_index = mz_zip_reader_locate_file(&zip_archive, "script.lua", NULL, 0);
+    if (file_index < 0) {
+        core_log(RETRO_LOG_ERROR, "script.lua not found in zip: %s", zip_path);
+        mz_zip_reader_end(&zip_archive);
+        return false;
+    }
+
+    // Get file stats
+    mz_zip_archive_file_stat file_stat;
+    if (!mz_zip_reader_file_stat(&zip_archive, file_index, &file_stat)) {
+        core_log(RETRO_LOG_ERROR, "Failed to get script.lua stats from zip: %s", zip_path);
+        mz_zip_reader_end(&zip_archive);
+        return false;
+    }
+
+    // Allocate memory for script
+    *script_data = (char *)malloc(file_stat.m_uncomp_size + 1);
+    if (!*script_data) {
+        core_log(RETRO_LOG_ERROR, "Failed to allocate memory for script.lua");
+        mz_zip_reader_end(&zip_archive);
+        return false;
+    }
+
+    // Extract script.lua
+    if (!mz_zip_reader_extract_to_mem(&zip_archive, file_index, *script_data, file_stat.m_uncomp_size, 0)) {
+        core_log(RETRO_LOG_ERROR, "Failed to extract script.lua from zip: %s", zip_path);
+        free(*script_data);
+        *script_data = NULL;
+        mz_zip_reader_end(&zip_archive);
+        return false;
+    }
+
+    (*script_data)[file_stat.m_uncomp_size] = '\0'; // Null-terminate
+    *script_size = file_stat.m_uncomp_size;
+
+    core_log(RETRO_LOG_INFO, "Successfully extracted script.lua (%zu bytes) from %s", *script_size, zip_path);
+    mz_zip_reader_end(&zip_archive);
+    return true;
+}
+
+bool extract_asset_from_zip(const char *asset_name, char **asset_data, size_t *asset_size) {
+    if (!zip_file_path[0]) {
+        core_log(RETRO_LOG_ERROR, "No zip file path set for asset extraction");
+        return false;
+    }
+
+    mz_zip_archive zip_archive;
+    memset(&zip_archive, 0, sizeof(zip_archive));
+
+    if (!mz_zip_reader_init_file(&zip_archive, zip_file_path, 0)) {
+        core_log(RETRO_LOG_ERROR, "Failed to initialize zip reader for asset: %s", zip_file_path);
+        return false;
+    }
+
+    int file_index = mz_zip_reader_locate_file(&zip_archive, asset_name, NULL, 0);
+    if (file_index < 0) {
+        core_log(RETRO_LOG_ERROR, "Asset %s not found in zip: %s", asset_name, zip_file_path);
+        mz_zip_reader_end(&zip_archive);
+        return false;
+    }
+
+    mz_zip_archive_file_stat file_stat;
+    if (!mz_zip_reader_file_stat(&zip_archive, file_index, &file_stat)) {
+        core_log(RETRO_LOG_ERROR, "Failed to get asset %s stats", asset_name);
+        mz_zip_reader_end(&zip_archive);
+        return false;
+    }
+
+    *asset_data = (char *)malloc(file_stat.m_uncomp_size);
+    if (!*asset_data) {
+        core_log(RETRO_LOG_ERROR, "Failed to allocate memory for asset %s", asset_name);
+        mz_zip_reader_end(&zip_archive);
+        return false;
+    }
+
+    if (!mz_zip_reader_extract_to_mem(&zip_archive, file_index, *asset_data, file_stat.m_uncomp_size, 0)) {
+        core_log(RETRO_LOG_ERROR, "Failed to extract asset %s", asset_name);
+        free(*asset_data);
+        *asset_data = NULL;
+        mz_zip_reader_end(&zip_archive);
+        return false;
+    }
+
+    *asset_size = file_stat.m_uncomp_size;
+    core_log(RETRO_LOG_INFO, "Successfully extracted asset %s (%zu bytes)", asset_name, *asset_size);
+    mz_zip_reader_end(&zip_archive);
+    return true;
+}
+
+
+
 // Set environment
 void retro_set_environment(retro_environment_t cb) {
    environ_cb = cb;
@@ -92,12 +250,16 @@ void retro_set_environment(retro_environment_t cb) {
       return;
    }
 
-   bool contentless = true;
-   if (environ_cb(RETRO_ENVIRONMENT_SET_SUPPORT_NO_GAME, &contentless)) {
-      core_log(RETRO_LOG_INFO, "Content-less support enabled");
-   } else {
-      core_log(RETRO_LOG_ERROR, "Failed to set content-less support");
-   }
+  // disable start core
+  bool contentless = false;
+  environ_cb(RETRO_ENVIRONMENT_SET_SUPPORT_NO_GAME, &contentless);
+
+  //  bool contentless = true;
+  //  if (environ_cb(RETRO_ENVIRONMENT_SET_SUPPORT_NO_GAME, &contentless)) {
+  //     core_log(RETRO_LOG_INFO, "Content-less support enabled");
+  //  } else {
+  //     core_log(RETRO_LOG_ERROR, "Failed to set content-less support");
+  //  }
 }
 
 // Video refresh callback
@@ -158,10 +320,10 @@ void retro_deinit(void) {
 // System info
 void retro_get_system_info(struct retro_system_info *info) {
    memset(info, 0, sizeof(*info));
-   info->library_name = "Hello World Core";
+   info->library_name = "Libretro Core Glad Lua";
    info->library_version = "1.0";
-   info->need_fullpath = false;
-   info->block_extract = false;
+   info->need_fullpath = true;
+   info->block_extract = true;
    info->valid_extensions = "zip";
    core_log(RETRO_LOG_INFO, "System info: %s v%s", info->library_name, info->library_version);
 }
@@ -192,12 +354,12 @@ void retro_reset(void) {
 
 // Load game
 bool retro_load_game(const struct retro_game_info *game) {
-    (void)game;
     if (!environ_cb) {
         core_log(RETRO_LOG_ERROR, "Environment callback not set");
         return false;
     }
 
+    // Set up OpenGL context
     hw_render.context_type = RETRO_HW_CONTEXT_OPENGL_CORE;
     hw_render.version_major = 3;
     hw_render.version_minor = 3;
@@ -215,16 +377,40 @@ bool retro_load_game(const struct retro_game_info *game) {
 
     module_opengl_set_callbacks(hw_render.get_proc_address, hw_render.get_current_framebuffer, &use_default_fbo);
 
-    if (!module_lua_init()) {
-        core_log(RETRO_LOG_WARN, "Failed to initialize Lua, continuing without scripting");
+    // Handle game data (script.zip)
+    if (game && game->path) {
+        // Store zip file path
+        strncpy(zip_file_path, game->path, sizeof(zip_file_path) - 1);
+        zip_file_path[sizeof(zip_file_path) - 1] = '\0';
+        core_log(RETRO_LOG_INFO, "Zip file path: %s", zip_file_path);
+
+        // Extract and load script.lua
+        char *script_data = NULL;
+        size_t script_size = 0;
+        if (extract_lua_script_from_file(game->path, &script_data, &script_size)) {
+            if (!module_lua_init_from_buffer(script_data, script_size)) {
+                core_log(RETRO_LOG_WARN, "Failed to initialize Lua with script from zip");
+            } else {
+                core_log(RETRO_LOG_INFO, "Lua initialized with script from zip");
+            }
+            free(script_data);
+        } else {
+            core_log(RETRO_LOG_WARN, "Failed to extract script.lua, falling back to default");
+            if (!module_lua_init()) {
+                core_log(RETRO_LOG_WARN, "Failed to initialize Lua with default script");
+            }
+        }
     } else {
-        core_log(RETRO_LOG_INFO, "Lua initialized with input_state_cb: %p", input_state_cb);
+        core_log(RETRO_LOG_INFO, "No game path provided, using default script");
+        zip_file_path[0] = '\0'; // Clear zip path
+        if (!module_lua_init()) {
+            core_log(RETRO_LOG_WARN, "Failed to initialize Lua with default script");
+        }
     }
 
-    core_log(RETRO_LOG_INFO, "Game loaded (content-less)");
+    core_log(RETRO_LOG_INFO, "Game loaded");
     return true;
 }
-
 
 // Run frame
 void retro_run(void) {
@@ -324,14 +510,75 @@ void retro_run(void) {
 
 
 
-
-
-
 // Load special game
 bool retro_load_game_special(unsigned game_type, const struct retro_game_info *info, size_t num_info) {
-   core_log(RETRO_LOG_INFO, "retro_load_game_special called (stubbed)");
-   return false;
+    core_log(RETRO_LOG_INFO, "retro_load_game_special called with game_type=%u, num_info=%zu", game_type, num_info);
+
+    if (!environ_cb) {
+        core_log(RETRO_LOG_ERROR, "Environment callback not set");
+        return false;
+    }
+
+    // Set up OpenGL context
+    hw_render.context_type = RETRO_HW_CONTEXT_OPENGL_CORE;
+    hw_render.version_major = 3;
+    hw_render.version_minor = 3;
+    hw_render.context_reset = module_opengl_init;
+    hw_render.context_destroy = module_opengl_deinit;
+    hw_render.bottom_left_origin = true;
+    hw_render.depth = true;
+    hw_render.stencil = false;
+    hw_render.cache_context = false;
+    hw_render.debug_context = true;
+    if (!environ_cb(RETRO_ENVIRONMENT_SET_HW_RENDER, &hw_render)) {
+        core_log(RETRO_LOG_ERROR, "Failed to set OpenGL context");
+        return false;
+    }
+
+    module_opengl_set_callbacks(hw_render.get_proc_address, hw_render.get_current_framebuffer, &use_default_fbo);
+
+    // Process first valid zip file
+    bool lua_initialized = false;
+    for (size_t i = 0; i < num_info; i++) {
+        if (info[i].path) {
+            // Store zip file path (use first valid path)
+            if (zip_file_path[0] == '\0') {
+                strncpy(zip_file_path, info[i].path, sizeof(zip_file_path) - 1);
+                zip_file_path[sizeof(zip_file_path) - 1] = '\0';
+                core_log(RETRO_LOG_INFO, "Zip file path (special): %s", zip_file_path);
+            }
+
+            // Extract and load script.lua
+            char *script_data = NULL;
+            size_t script_size = 0;
+            if (extract_lua_script_from_file(info[i].path, &script_data, &script_size)) {
+                if (module_lua_init_from_buffer(script_data, script_size)) {
+                    core_log(RETRO_LOG_INFO, "Lua initialized with script from zip (entry %zu)", i);
+                    lua_initialized = true;
+                } else {
+                    core_log(RETRO_LOG_WARN, "Failed to initialize Lua with script from zip (entry %zu)", i);
+                }
+                free(script_data);
+            } else {
+                core_log(RETRO_LOG_WARN, "Failed to extract script.lua from zip (entry %zu)", i);
+            }
+        }
+    }
+
+    // Fallback to default script if no valid script was loaded
+    if (!lua_initialized) {
+        core_log(RETRO_LOG_INFO, "No valid script loaded, using default script");
+        zip_file_path[0] = '\0'; // Clear zip path
+        if (!module_lua_init()) {
+            core_log(RETRO_LOG_WARN, "Failed to initialize Lua with default script");
+        }
+    }
+
+    core_log(RETRO_LOG_INFO, "Game special loaded");
+    return true;
 }
+
+
 
 // Unload game
 void retro_unload_game(void) {
