@@ -17,7 +17,7 @@ static retro_environment_t environ_cb;
 static retro_log_printf_t log_cb;
 static retro_video_refresh_t video_cb;
 static retro_input_poll_t input_poll_cb;
-static retro_input_state_t input_state_cb;
+retro_input_state_t input_state_cb;
 static struct retro_hw_render_callback hw_render;
 static bool initialized = false;
 static FILE *log_file = NULL;
@@ -113,9 +113,19 @@ void retro_set_input_poll(retro_input_poll_t cb) {
 }
 
 void retro_set_input_state(retro_input_state_t cb) {
-   input_state_cb = cb;
-   printf("Input state callback set: %p\n", cb);
+    input_state_cb = cb;
+    core_log(RETRO_LOG_INFO, "Input state callback set: %p", cb);
+    // Reinitialize Lua if it was initialized before input callback was set
+    if (module_lua_get_state() && cb) {
+        module_lua_deinit();
+        if (!module_lua_init()) {
+            core_log(RETRO_LOG_WARN, "Failed to reinitialize Lua after input callback set");
+        } else {
+            core_log(RETRO_LOG_INFO, "Lua reinitialized with input_state_cb: %p", cb);
+        }
+    }
 }
+
 
 // Stubbed audio callbacks
 void retro_set_audio_sample(retro_audio_sample_t cb) { (void)cb; }
@@ -182,42 +192,43 @@ void retro_reset(void) {
 
 // Load game
 bool retro_load_game(const struct retro_game_info *game) {
-   (void)game;
-   if (!environ_cb) {
-      core_log(RETRO_LOG_ERROR, "Environment callback not set");
-      return false;
-   }
+    (void)game;
+    if (!environ_cb) {
+        core_log(RETRO_LOG_ERROR, "Environment callback not set");
+        return false;
+    }
 
-   hw_render.context_type = RETRO_HW_CONTEXT_OPENGL_CORE;
-   hw_render.version_major = 3;
-   hw_render.version_minor = 3;
-   hw_render.context_reset = module_opengl_init; // Now matches retro_hw_context_reset_t
-   hw_render.context_destroy = module_opengl_deinit;
-   hw_render.bottom_left_origin = true;
-   hw_render.depth = true;
-   hw_render.stencil = false;
-   hw_render.cache_context = false;
-   hw_render.debug_context = true;
-   if (!environ_cb(RETRO_ENVIRONMENT_SET_HW_RENDER, &hw_render)) {
-      core_log(RETRO_LOG_ERROR, "Failed to set OpenGL context");
-      return false;
-   }
+    hw_render.context_type = RETRO_HW_CONTEXT_OPENGL_CORE;
+    hw_render.version_major = 3;
+    hw_render.version_minor = 3;
+    hw_render.context_reset = module_opengl_init;
+    hw_render.context_destroy = module_opengl_deinit;
+    hw_render.bottom_left_origin = true;
+    hw_render.depth = true;
+    hw_render.stencil = false;
+    hw_render.cache_context = false;
+    hw_render.debug_context = true;
+    if (!environ_cb(RETRO_ENVIRONMENT_SET_HW_RENDER, &hw_render)) {
+        core_log(RETRO_LOG_ERROR, "Failed to set OpenGL context");
+        return false;
+    }
 
-   // Set OpenGL callbacks
-   module_opengl_set_callbacks(hw_render.get_proc_address, hw_render.get_current_framebuffer, &use_default_fbo);
+    module_opengl_set_callbacks(hw_render.get_proc_address, hw_render.get_current_framebuffer, &use_default_fbo);
 
-   if (!module_lua_init(input_state_cb)) {
-      core_log(RETRO_LOG_WARN, "Failed to initialize Lua, continuing without scripting");
-   }
+    if (!module_lua_init()) {
+        core_log(RETRO_LOG_WARN, "Failed to initialize Lua, continuing without scripting");
+    } else {
+        core_log(RETRO_LOG_INFO, "Lua initialized with input_state_cb: %p", input_state_cb);
+    }
 
-   core_log(RETRO_LOG_INFO, "Game loaded (content-less)");
-   return true;
+    core_log(RETRO_LOG_INFO, "Game loaded (content-less)");
+    return true;
 }
 
 
 // Run frame
 void retro_run(void) {
-   printf("render\n");
+  //  printf("render\n");
    if (!initialized) {
       core_log(RETRO_LOG_ERROR, "Core not initialized");
       return;
@@ -227,33 +238,33 @@ void retro_run(void) {
       core_log(RETRO_LOG_ERROR, "OpenGL not initialized, skipping frame");
       return;
    }
-   printf("gl_initialized\n");
+  //  printf("gl_initialized\n");
 
    // Poll input
    if (input_poll_cb) {
       input_poll_cb();
-      core_log(RETRO_LOG_DEBUG, "Input polled");
+      // core_log(RETRO_LOG_DEBUG, "Input polled");
    } else {
-      core_log(RETRO_LOG_WARN, "No input_poll_cb set");
+      // core_log(RETRO_LOG_WARN, "No input_poll_cb set");
    }
 
    // Log input state for A and B
    if (input_state_cb) {
       int a_state = input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_A);
       int b_state = input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_B);
-      core_log(RETRO_LOG_DEBUG, "Direct input check: A(id=%d)=%d, B(id=%d)=%d",
+      core_log(RETRO_LOG_DEBUG, "Direct input check: A(id=%d)=%d, B(id=%d)=%d\n",
                RETRO_DEVICE_ID_JOYPAD_A, a_state, RETRO_DEVICE_ID_JOYPAD_B, b_state);
       for (int i = 0; i < 16; i++) {
          int state = input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, i);
          if (state) {
-            core_log(RETRO_LOG_DEBUG, "Joypad button id=%d pressed", i);
+            core_log(RETRO_LOG_DEBUG, "Joypad button id=%d pressed\n", i);
          }
       }
    }
 
    // Bind framebuffer
    module_opengl_bind_framebuffer();
-   printf("get_current_framebuffer\n");
+  //  printf("get_current_framebuffer\n");
    module_opengl_check_error("framebuffer binding");
 
    // Set viewport
@@ -262,39 +273,41 @@ void retro_run(void) {
    // Clear framebuffer
    module_opengl_clear();
 
+   // Increment animation time
+   animation_time += 0.016f; // ~60 FPS (1/60 = 0.01667)
+
    // Run Lua update
-   lua_State *L = module_lua_get_state();
-   if (L) {
-      module_lua_update(animation_time);
-   } else {
-      // Fallback quad drawing
-      float r = 0.0f, g = 0.5f, b = 0.0f; // Default green
-      if (input_state_cb) {
-         int a_state = input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_A);
-         int b_state = input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_B);
-         core_log(RETRO_LOG_DEBUG, "Fallback input state: A(id=%d)=%d, B(id=%d)=%d",
-                  RETRO_DEVICE_ID_JOYPAD_A, a_state, RETRO_DEVICE_ID_JOYPAD_B, b_state);
-         if (a_state)
-            g = 0.0f, b = 1.0f; // Blue
-         if (b_state)
-            r = 1.0f, g = 0.0f; // Red
-      }
+    lua_State *L = module_lua_get_state();
+    if (L) {
+        module_lua_update(animation_time);
+    } else {
+        // Fallback quad drawing
+        float r = 0.0f, g = 0.5f, b = 0.0f; // Default green
+        if (input_state_cb) {
+            int a_state = input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_A);
+            int b_state = input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_B);
+            core_log(RETRO_LOG_DEBUG, "Fallback input state: A(id=%d)=%d, B(id=%d)=%d",
+                     RETRO_DEVICE_ID_JOYPAD_A, a_state, RETRO_DEVICE_ID_JOYPAD_B, b_state);
+            if (a_state)
+                g = 0.0f, b = 1.0f; // Blue
+            if (b_state)
+                r = 1.0f, g = 0.0f; // Red
+        }
 
-      animation_time += 0.016f;
-      float scale = 0.8f + 0.2f * sinf(animation_time * 2.0f);
-      float quad_width = HW_WIDTH * scale;
-      float quad_height = HW_HEIGHT * scale;
-      float quad_x = (HW_WIDTH - quad_width) * 0.5f;
-      float quad_y = (HW_HEIGHT - quad_height) * 0.5f;
+        float scale = 0.8f + 0.2f * sinf(animation_time * 2.0f);
+        float quad_width = HW_WIDTH * scale;
+        float quad_height = HW_HEIGHT * scale;
+        float quad_x = (HW_WIDTH - quad_width) * 0.5f;
+        float quad_y = (HW_HEIGHT - quad_height) * 0.5f;
 
-      module_opengl_draw_solid_quad(quad_x, quad_y, quad_width, quad_height, r, g, b, 1.0f, HW_WIDTH, HW_HEIGHT);
-      module_opengl_check_error("draw_solid_quad");
-   }
+        module_opengl_draw_solid_quad(quad_x, quad_y, quad_width, quad_height, r, g, b, 1.0f, HW_WIDTH, HW_HEIGHT);
+        module_opengl_check_error("draw_solid_quad");
+    }
 
    // Log FBO binding
    GLint current_fbo;
    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &current_fbo);
-   core_log(RETRO_LOG_DEBUG, "Current FBO binding after rendering: %d", current_fbo);
+  //  core_log(RETRO_LOG_DEBUG, "Current FBO binding after rendering: %d", current_fbo);
 
    // Unbind framebuffer
    glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -303,11 +316,14 @@ void retro_run(void) {
    // Present frame
    if (video_cb) {
       video_cb(RETRO_HW_FRAME_BUFFER_VALID, 960, 720, 0);
-      core_log(RETRO_LOG_DEBUG, "Frame presented with size 960x720");
+      // core_log(RETRO_LOG_DEBUG, "Frame presented with size 960x720");
    } else {
-      core_log(RETRO_LOG_ERROR, "No video callback set");
+      // core_log(RETRO_LOG_ERROR, "No video callback set");
    }
 }
+
+
+
 
 
 

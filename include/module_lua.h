@@ -7,7 +7,7 @@
 #include <lualib.h>
 
 // Initialize Lua and load script
-bool module_lua_init(retro_input_state_t input_state_cb);
+bool module_lua_init(void);
 
 // Deinitialize Lua
 void module_lua_deinit(void);

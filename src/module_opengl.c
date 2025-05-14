@@ -146,9 +146,6 @@ void module_opengl_init(void) {
    core_log(RETRO_LOG_INFO, "OpenGL initialized successfully");
 }
 
-
-
-
 void module_opengl_deinit(void) {
    if (gl_initialized) {
       glDeleteProgram(solid_shader_program);
@@ -163,7 +160,7 @@ void module_opengl_draw_solid_quad(float x, float y, float w, float h,
                                    float r, float g, float b, float a,
                                    float vp_width, float vp_height) {
    if (!glIsProgram(solid_shader_program) || !glIsVertexArray(vao) || !glIsBuffer(vbo)) {
-      core_log(RETRO_LOG_ERROR, "Invalid GL state in draw_solid_quad");
+      // core_log(RETRO_LOG_ERROR, "Invalid GL state in draw_solid_quad");
       return;
    }
 
@@ -173,8 +170,8 @@ void module_opengl_draw_solid_quad(float x, float y, float w, float h,
    float y1 = 1.0f - ((y + h) / vp_height) * 2.0f;
 
    float vertices[] = { x0, y0, x1, y0, x0, y1, x1, y1 };
-   core_log(RETRO_LOG_DEBUG, "Quad vertices: (%f,%f), (%f,%f), (%f,%f), (%f,%f)",
-            vertices[0], vertices[1], vertices[2], vertices[3], vertices[4], vertices[5], vertices[6], vertices[7]);
+  //  core_log(RETRO_LOG_DEBUG, "Quad vertices: (%f,%f), (%f,%f), (%f,%f), (%f,%f)",
+  //           vertices[0], vertices[1], vertices[2], vertices[3], vertices[4], vertices[5], vertices[6], vertices[7]);
 
    glUseProgram(solid_shader_program);
    glBindVertexArray(vao);
@@ -191,30 +188,30 @@ void module_opengl_draw_solid_quad(float x, float y, float w, float h,
    glUseProgram(0);
    module_opengl_check_error("draw_solid_quad");
 
-   core_log(RETRO_LOG_DEBUG, "Drew solid quad at (%f, %f), size (%f, %f)", x, y, w, h);
+  //  core_log(RETRO_LOG_DEBUG, "Drew solid quad at (%f, %f), size (%f, %f)", x, y, w, h);
 }
 
 bool module_opengl_bind_framebuffer(void) {
    GLuint fbo = 0;
    if (use_default_fbo || !get_current_framebuffer) {
       glBindFramebuffer(GL_FRAMEBUFFER, 0);
-      core_log(RETRO_LOG_INFO, "Using default framebuffer (0)");
+      // core_log(RETRO_LOG_INFO, "Using default framebuffer (0)");
    } else {
       fbo = (GLuint)(uintptr_t)(get_current_framebuffer());
-      core_log(RETRO_LOG_INFO, "get_current_framebuffer returned FBO: %u", fbo);
+      // core_log(RETRO_LOG_INFO, "get_current_framebuffer returned FBO: %u", fbo);
       if (fbo == 0) {
-         core_log(RETRO_LOG_WARN, "get_current_framebuffer returned 0, falling back to default framebuffer");
+        //  core_log(RETRO_LOG_WARN, "get_current_framebuffer returned 0, falling back to default framebuffer");
          glBindFramebuffer(GL_FRAMEBUFFER, 0);
          use_default_fbo = true;
       } else {
          glBindFramebuffer(GL_FRAMEBUFFER, fbo);
          GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
          if (status != GL_FRAMEBUFFER_COMPLETE) {
-            core_log(RETRO_LOG_ERROR, "Framebuffer %u incomplete (status: %d), falling back to default framebuffer", fbo, status);
+            // core_log(RETRO_LOG_ERROR, "Framebuffer %u incomplete (status: %d), falling back to default framebuffer", fbo, status);
             glBindFramebuffer(GL_FRAMEBUFFER, 0);
             use_default_fbo = true;
          } else {
-            core_log(RETRO_LOG_INFO, "Successfully bound FBO: %u", fbo);
+            // core_log(RETRO_LOG_INFO, "Successfully bound FBO: %u", fbo);
             return true;
          }
       }
