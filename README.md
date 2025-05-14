@@ -3,8 +3,15 @@
 # License: MIT
 This project is licensed under the MIT License. See LICENSE for details.
 
+# Status:
+- work in progres.
+
+# Information:
+  Testing lua script and loading content data.
+
+
 # Project Overview
-The libretro core glad is a minimal, content-less Libretro core that demonstrates hardware-accelerated rendering using OpenGL 3.3 and the GLAD library within the RetroArch frontend. The core renders a pulsing green quad (optionally changing to blue or red based on joypad input) in a 512x512 framebuffer, scaled to a 960x720 window by RetroArch. It serves as an educational example for building Libretro cores with modern OpenGL, showcasing:
+The libretro core and opengl glad is a minimal, content-less Libretro core that demonstrates hardware-accelerated rendering using OpenGL 3.3 and the GLAD library within the RetroArch frontend. The core renders a pulsing green quad (optionally changing to blue or red based on joypad input) in a 512x512 framebuffer, scaled to a 960x720 window by RetroArch. It serves as an educational example for building Libretro cores with modern OpenGL, showcasing:
 
 - Hardware Rendering: Uses OpenGL 3.3 core profile with GLAD for function loading.
 - Framebuffer Management: Renders to a frontend-provided framebuffer (FBO) or falls back to the default FBO.
