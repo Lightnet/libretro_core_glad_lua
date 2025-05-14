@@ -2,16 +2,14 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdarg.h>
-#include <glad/glad.h>
 #include <math.h>
-#include <lua.h> // Lua headers
-#include <lauxlib.h>
-#include <lualib.h>
+#include "module_opengl.h"
+#include "module_lua.h"
 
 // Framebuffer dimensions
 #define WIDTH 320
 #define HEIGHT 240
-#define HW_WIDTH 512  // Match RetroArch HW render size
+#define HW_WIDTH 512
 #define HW_HEIGHT 512
 
 // Global variables
@@ -20,17 +18,11 @@ static retro_log_printf_t log_cb;
 static retro_video_refresh_t video_cb;
 static retro_input_poll_t input_poll_cb;
 static retro_input_state_t input_state_cb;
-static retro_hw_get_current_framebuffer_t get_current_framebuffer;
-static retro_hw_get_proc_address_t get_proc_address;
 static struct retro_hw_render_callback hw_render;
 static bool initialized = false;
 static FILE *log_file = NULL;
-static GLuint solid_shader_program = 0;
-static GLuint vbo, vao;
-static bool gl_initialized = false;
-static bool use_default_fbo = false; // Prefer frontend FBO
-static float animation_time = 0.0f; // For pulsing animation
-static lua_State *L = NULL; // Lua state
+static float animation_time = 0.0f;
+static bool use_default_fbo = false;
 
 // File-based logging
 static void fallback_log(const char *level, const char *msg) {
@@ -68,7 +60,7 @@ static void fallback_log_format(const char *level, const char *fmt, ...) {
 }
 
 // Unified logging helper
-static void core_log(enum retro_log_level level, const char *fmt, ...) {
+void core_log(enum retro_log_level level, const char *fmt, ...) {
     va_list args;
     va_start(args, fmt);
 
@@ -90,256 +82,6 @@ static void core_log(enum retro_log_level level, const char *fmt, ...) {
     }
 
     va_end(args);
-}
-
-// Check OpenGL errors
-static void check_gl_error(const char *context) {
-   GLenum err;
-   bool has_error = false;
-   while ((err = glGetError()) != GL_NO_ERROR) {
-      has_error = true;
-      core_log(RETRO_LOG_ERROR, "OpenGL error in %s: %d", context, err);
-   }
-   if (!has_error)
-      core_log(RETRO_LOG_DEBUG, "No OpenGL errors in %s", context);
-}
-
-// Shaders (GLSL 330 core)
-static const char *solid_vertex_shader_src =
-   "#version 330 core\n"
-   "layout(location = 0) in vec2 position;\n"
-   "void main() {\n"
-   "   gl_Position = vec4(position, 0.0, 1.0);\n"
-   "}\n";
-
-static const char *solid_fragment_shader_src =
-   "#version 330 core\n"
-   "out vec4 frag_color;\n"
-   "uniform vec4 color;\n"
-   "void main() {\n"
-   "   frag_color = color;\n"
-   "}\n";
-
-// Create shader program
-static GLuint create_shader_program(const char *vs_src, const char *fs_src, const char *name) {
-   GLuint vs = glCreateShader(GL_VERTEX_SHADER);
-   glShaderSource(vs, 1, &vs_src, NULL);
-   glCompileShader(vs);
-   GLint success;
-   glGetShaderiv(vs, GL_COMPILE_STATUS, &success);
-   if (!success) {
-      char info_log[512];
-      glGetShaderInfoLog(vs, 512, NULL, info_log);
-      core_log(RETRO_LOG_ERROR, "%s vertex shader compilation failed: %s", name, info_log);
-      return 0;
-   }
-
-   GLuint fs = glCreateShader(GL_FRAGMENT_SHADER);
-   glShaderSource(fs, 1, &fs_src, NULL);
-   glCompileShader(fs);
-   glGetShaderiv(fs, GL_COMPILE_STATUS, &success);
-   if (!success) {
-      char info_log[512];
-      glGetShaderInfoLog(fs, 512, NULL, info_log);
-      core_log(RETRO_LOG_ERROR, "%s fragment shader compilation failed: %s", name, info_log);
-      return 0;
-   }
-
-   GLuint program = glCreateProgram();
-   glAttachShader(program, vs);
-   glAttachShader(program, fs);
-   glLinkProgram(program);
-   glGetProgramiv(program, GL_LINK_STATUS, &success);
-   if (!success) {
-      char info_log[512];
-      glGetProgramInfoLog(program, 512, NULL, info_log);
-      core_log(RETRO_LOG_ERROR, "%s shader program linking failed: %s", name, info_log);
-      return 0;
-   }
-
-   glDeleteShader(vs);
-   glDeleteShader(fs);
-   core_log(RETRO_LOG_INFO, "%s shader program created successfully", name);
-   return program;
-}
-
-// Initialize OpenGL
-static void init_opengl(void) {
-   if (gl_initialized) {
-      core_log(RETRO_LOG_INFO, "OpenGL already initialized, skipping");
-      return;
-   }
-
-   if (!get_proc_address) {
-      core_log(RETRO_LOG_ERROR, "No get_proc_address callback provided, cannot initialize GLAD");
-      return;
-   }
-
-   if (!gladLoadGLLoader((GLADloadproc)get_proc_address)) {
-      core_log(RETRO_LOG_ERROR, "Failed to initialize GLAD");
-      return;
-   }
-
-   const char *gl_version = (const char *)glGetString(GL_VERSION);
-   if (!gl_version) {
-      core_log(RETRO_LOG_ERROR, "Failed to get OpenGL version");
-      return;
-   }
-   core_log(RETRO_LOG_INFO, "OpenGL version: %s", gl_version);
-
-   if (!GLAD_GL_VERSION_3_3) {
-      core_log(RETRO_LOG_ERROR, "OpenGL 3.3 core profile not supported");
-      return;
-   }
-
-   solid_shader_program = create_shader_program(solid_vertex_shader_src, solid_fragment_shader_src, "Solid");
-   if (!solid_shader_program) {
-      core_log(RETRO_LOG_ERROR, "Failed to create solid shader program");
-      return;
-   }
-
-   glGenVertexArrays(1, &vao);
-   glBindVertexArray(vao);
-   glGenBuffers(1, &vbo);
-   glBindBuffer(GL_ARRAY_BUFFER, vbo);
-   glBufferData(GL_ARRAY_BUFFER, 4 * 2 * sizeof(float), NULL, GL_DYNAMIC_DRAW);
-
-   glEnableVertexAttribArray(0);
-   glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void *)0);
-
-   glBindBuffer(GL_ARRAY_BUFFER, 0);
-   glBindVertexArray(0);
-   check_gl_error("init_opengl VAO setup");
-
-   glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-   glEnable(GL_BLEND);
-   glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-   glDisable(GL_DEPTH_TEST);
-   glDisable(GL_CULL_FACE);
-   check_gl_error("init_opengl state setup");
-
-   gl_initialized = true;
-   core_log(RETRO_LOG_INFO, "OpenGL initialized successfully");
-}
-
-// Clean up OpenGL
-static void deinit_opengl(void) {
-   if (gl_initialized) {
-      glDeleteProgram(solid_shader_program);
-      glDeleteBuffers(1, &vbo);
-      glDeleteVertexArrays(1, &vao);
-      gl_initialized = false;
-      core_log(RETRO_LOG_INFO, "OpenGL deinitialized");
-   }
-}
-
-// Draw a solid quad
-static void draw_solid_quad(float x, float y, float w, float h, float r, float g, float b, float a, float vp_width, float vp_height) {
-   if (!glIsProgram(solid_shader_program) || !glIsVertexArray(vao) || !glIsBuffer(vbo)) {
-      core_log(RETRO_LOG_ERROR, "Invalid GL state in draw_solid_quad");
-      return;
-   }
-
-   float x0 = (x / vp_width) * 2.0f - 1.0f;
-   float y0 = 1.0f - (y / vp_height) * 2.0f;
-   float x1 = ((x + w) / vp_width) * 2.0f - 1.0f;
-   float y1 = 1.0f - ((y + h) / vp_height) * 2.0f;
-
-   float vertices[] = { x0, y0, x1, y0, x0, y1, x1, y1 };
-   core_log(RETRO_LOG_DEBUG, "Quad vertices: (%f,%f), (%f,%f), (%f,%f), (%f,%f)",
-            vertices[0], vertices[1], vertices[2], vertices[3], vertices[4], vertices[5], vertices[6], vertices[7]);
-
-   glUseProgram(solid_shader_program);
-   glBindVertexArray(vao);
-   glBindBuffer(GL_ARRAY_BUFFER, vbo);
-   glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(vertices), vertices);
-
-   GLint color_loc = glGetUniformLocation(solid_shader_program, "color");
-   glUniform4f(color_loc, r, g, b, a);
-
-   glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-
-   glBindBuffer(GL_ARRAY_BUFFER, 0);
-   glBindVertexArray(0);
-   glUseProgram(0);
-   check_gl_error("draw_solid_quad");
-
-   core_log(RETRO_LOG_DEBUG, "Drew solid quad at (%f, %f), size (%f, %f)", x, y, w, h);
-}
-
-// Lua-exposed function: draw_quad(x, y, w, h, r, g, b, a)
-static int lua_draw_quad(lua_State *L) {
-   float x = (float)luaL_checknumber(L, 1);
-   float y = (float)luaL_checknumber(L, 2);
-   float w = (float)luaL_checknumber(L, 3);
-   float h = (float)luaL_checknumber(L, 4);
-   float r = (float)luaL_checknumber(L, 5);
-   float g = (float)luaL_checknumber(L, 6);
-   float b = (float)luaL_checknumber(L, 7);
-   float a = (float)luaL_checknumber(L, 8);
-   draw_solid_quad(x, y, w, h, r, g, b, a, HW_WIDTH, HW_HEIGHT);
-   return 0;
-}
-
-// Lua-exposed function: get_input(device, index, id)
-static int lua_get_input(lua_State *L) {
-   int device = (int)luaL_checkinteger(L, 1);
-   int index = (int)luaL_checkinteger(L, 2);
-   int id = (int)luaL_checkinteger(L, 3);
-   int state = 0;
-   if (input_state_cb) {
-      state = input_state_cb(index, device, 0, id);
-      core_log(RETRO_LOG_DEBUG, "lua_get_input: device=%d, index=%d, id=%d, state=%d",
-               device, index, id, state);
-   } else {
-      core_log(RETRO_LOG_WARN, "No input_state_cb set for device=%d, index=%d, id=%d",
-               device, index, id);
-   }
-   lua_pushboolean(L, state != 0);
-   return 1;
-}
-
-// Initialize Lua
-static bool init_lua(void) {
-   if (L) {
-      core_log(RETRO_LOG_INFO, "Lua already initialized, skipping");
-      return true;
-   }
-
-   L = luaL_newstate();
-   if (!L) {
-      core_log(RETRO_LOG_ERROR, "Failed to create Lua state");
-      return false;
-   }
-
-   luaL_openlibs(L); // Load standard Lua libraries
-
-   // Register C functions
-   lua_register(L, "draw_quad", lua_draw_quad);
-   lua_register(L, "get_input", lua_get_input);
-
-   // Load Lua script
-   const char *script_path = "script.lua";
-   if (luaL_dofile(L, script_path) != LUA_OK) {
-      const char *err = lua_tostring(L, -1);
-      core_log(RETRO_LOG_ERROR, "Failed to load Lua script '%s': %s", script_path, err);
-      lua_pop(L, 1);
-      lua_close(L);
-      L = NULL;
-      return false;
-   }
-
-   core_log(RETRO_LOG_INFO, "Lua initialized and script loaded");
-   return true;
-}
-
-// Clean up Lua
-static void deinit_lua(void) {
-   if (L) {
-      lua_close(L);
-      L = NULL;
-      core_log(RETRO_LOG_INFO, "Lua deinitialized");
-   }
 }
 
 // Set environment
@@ -367,13 +109,11 @@ void retro_set_video_refresh(retro_video_refresh_t cb) {
 // Input callbacks
 void retro_set_input_poll(retro_input_poll_t cb) {
    input_poll_cb = cb;
-  //  core_log(RETRO_LOG_INFO, "Input poll callback set");
    printf("Input poll callback set: %p\n", cb);
 }
 
 void retro_set_input_state(retro_input_state_t cb) {
    input_state_cb = cb;
-  //  core_log(RETRO_LOG_INFO, "Input state callback set");
    printf("Input state callback set: %p\n", cb);
 }
 
@@ -395,8 +135,8 @@ void retro_init(void) {
 
 // Deinitialize core
 void retro_deinit(void) {
-   deinit_opengl();
-   deinit_lua();
+   module_opengl_deinit();
+   module_lua_deinit();
    if (log_file) {
       fclose(log_file);
       log_file = NULL;
@@ -412,7 +152,7 @@ void retro_get_system_info(struct retro_system_info *info) {
    info->library_version = "1.0";
    info->need_fullpath = false;
    info->block_extract = false;
-   info->valid_extensions = "";
+   info->valid_extensions = "zip";
    core_log(RETRO_LOG_INFO, "System info: %s v%s", info->library_name, info->library_version);
 }
 
@@ -451,8 +191,8 @@ bool retro_load_game(const struct retro_game_info *game) {
    hw_render.context_type = RETRO_HW_CONTEXT_OPENGL_CORE;
    hw_render.version_major = 3;
    hw_render.version_minor = 3;
-   hw_render.context_reset = init_opengl;
-   hw_render.context_destroy = deinit_opengl;
+   hw_render.context_reset = module_opengl_init; // Now matches retro_hw_context_reset_t
+   hw_render.context_destroy = module_opengl_deinit;
    hw_render.bottom_left_origin = true;
    hw_render.depth = true;
    hw_render.stencil = false;
@@ -463,27 +203,17 @@ bool retro_load_game(const struct retro_game_info *game) {
       return false;
    }
 
-   get_current_framebuffer = hw_render.get_current_framebuffer;
-   get_proc_address = hw_render.get_proc_address;
-   if (!get_proc_address) {
-      core_log(RETRO_LOG_ERROR, "No get_proc_address callback provided");
-      return false;
-   }
-   if (!get_current_framebuffer) {
-      core_log(RETRO_LOG_WARN, "No get_current_framebuffer callback provided, will attempt default framebuffer");
-      use_default_fbo = true;
-   } else {
-      core_log(RETRO_LOG_INFO, "get_current_framebuffer callback set successfully");
-      use_default_fbo = false;
-   }
+   // Set OpenGL callbacks
+   module_opengl_set_callbacks(hw_render.get_proc_address, hw_render.get_current_framebuffer, &use_default_fbo);
 
-   if (!init_lua()) {
-      core_log(RETRO_LOG_ERROR, "Failed to initialize Lua, continuing without scripting");
+   if (!module_lua_init(input_state_cb)) {
+      core_log(RETRO_LOG_WARN, "Failed to initialize Lua, continuing without scripting");
    }
 
    core_log(RETRO_LOG_INFO, "Game loaded (content-less)");
    return true;
 }
+
 
 // Run frame
 void retro_run(void) {
@@ -493,17 +223,11 @@ void retro_run(void) {
       return;
    }
 
-   if (!gl_initialized) {
-      core_log(RETRO_LOG_ERROR, "OpenGL not initialized");
+   if (!module_opengl_is_initialized()) {
+      core_log(RETRO_LOG_ERROR, "OpenGL not initialized, skipping frame");
       return;
    }
    printf("gl_initialized\n");
-
-   if (!glIsProgram(solid_shader_program) || !glIsVertexArray(vao) || !glIsBuffer(vbo)) {
-      core_log(RETRO_LOG_ERROR, "Invalid GL state");
-      return;
-   }
-   printf("solid_shader_program\n");
 
    // Poll input
    if (input_poll_cb) {
@@ -519,7 +243,6 @@ void retro_run(void) {
       int b_state = input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_B);
       core_log(RETRO_LOG_DEBUG, "Direct input check: A(id=%d)=%d, B(id=%d)=%d",
                RETRO_DEVICE_ID_JOYPAD_A, a_state, RETRO_DEVICE_ID_JOYPAD_B, b_state);
-      // Scan all joypad buttons
       for (int i = 0; i < 16; i++) {
          int state = input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, i);
          if (state) {
@@ -529,60 +252,20 @@ void retro_run(void) {
    }
 
    // Bind framebuffer
-   GLuint fbo = 0;
-   if (use_default_fbo || !get_current_framebuffer) {
-      glBindFramebuffer(GL_FRAMEBUFFER, 0);
-      core_log(RETRO_LOG_INFO, "Using default framebuffer (0)");
-   } else {
-      fbo = (GLuint)(uintptr_t)(get_current_framebuffer());
-      core_log(RETRO_LOG_INFO, "get_current_framebuffer returned FBO: %u", fbo);
-      if (fbo == 0) {
-         core_log(RETRO_LOG_WARN, "get_current_framebuffer returned 0, falling back to default framebuffer");
-         glBindFramebuffer(GL_FRAMEBUFFER, 0);
-         use_default_fbo = true;
-      } else {
-         glBindFramebuffer(GL_FRAMEBUFFER, fbo);
-         GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
-         if (status != GL_FRAMEBUFFER_COMPLETE) {
-            core_log(RETRO_LOG_ERROR, "Framebuffer %u incomplete (status: %d), falling back to default framebuffer", fbo, status);
-            glBindFramebuffer(GL_FRAMEBUFFER, 0);
-            use_default_fbo = true;
-         } else {
-            core_log(RETRO_LOG_INFO, "Successfully bound FBO: %u", fbo);
-         }
-      }
-   }
+   module_opengl_bind_framebuffer();
    printf("get_current_framebuffer\n");
-   check_gl_error("framebuffer binding");
+   module_opengl_check_error("framebuffer binding");
 
    // Set viewport
-   GLint viewport[4];
-   glGetIntegerv(GL_VIEWPORT, viewport);
-   if (viewport[2] != HW_WIDTH || viewport[3] != HW_HEIGHT) {
-      glViewport(0, 0, HW_WIDTH, HW_HEIGHT);
-      core_log(RETRO_LOG_INFO, "Set viewport to %dx%d", HW_WIDTH, HW_HEIGHT);
-   }
-   check_gl_error("glViewport");
+   module_opengl_set_viewport();
 
    // Clear framebuffer
-   glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-   check_gl_error("glClear");
+   module_opengl_clear();
 
    // Run Lua update
+   lua_State *L = module_lua_get_state();
    if (L) {
-      lua_getglobal(L, "update");
-      if (lua_isfunction(L, -1)) {
-         lua_pushnumber(L, animation_time);
-         if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
-            const char *err = lua_tostring(L, -1);
-            core_log(RETRO_LOG_ERROR, "Lua update error: %s", err);
-            lua_pop(L, 1);
-         }
-      } else {
-         lua_pop(L, 1);
-         core_log(RETRO_LOG_WARN, "No Lua update function found");
-      }
+      module_lua_update(animation_time);
    } else {
       // Fallback quad drawing
       float r = 0.0f, g = 0.5f, b = 0.0f; // Default green
@@ -604,8 +287,8 @@ void retro_run(void) {
       float quad_x = (HW_WIDTH - quad_width) * 0.5f;
       float quad_y = (HW_HEIGHT - quad_height) * 0.5f;
 
-      draw_solid_quad(quad_x, quad_y, quad_width, quad_height, r, g, b, 1.0f, HW_WIDTH, HW_HEIGHT);
-      check_gl_error("draw_solid_quad");
+      module_opengl_draw_solid_quad(quad_x, quad_y, quad_width, quad_height, r, g, b, 1.0f, HW_WIDTH, HW_HEIGHT);
+      module_opengl_check_error("draw_solid_quad");
    }
 
    // Log FBO binding
@@ -615,7 +298,7 @@ void retro_run(void) {
 
    // Unbind framebuffer
    glBindFramebuffer(GL_FRAMEBUFFER, 0);
-   check_gl_error("unbind framebuffer");
+   module_opengl_check_error("unbind framebuffer");
 
    // Present frame
    if (video_cb) {
@@ -625,6 +308,7 @@ void retro_run(void) {
       core_log(RETRO_LOG_ERROR, "No video callback set");
    }
 }
+
 
 
 // Load special game

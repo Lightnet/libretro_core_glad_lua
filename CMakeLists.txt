@@ -1,12 +1,17 @@
 cmake_minimum_required(VERSION 3.14)
 project(libretro_core_glad_lua C)
+
 include(FetchContent)
+
+# Fetch libretro-common
 FetchContent_Declare(
     libretro-common
     GIT_REPOSITORY https://github.com/libretro/libretro-common.git
     GIT_TAG master
 )
 FetchContent_MakeAvailable(libretro-common)
+
+# Fetch glad
 FetchContent_Declare(
     glad
     GIT_REPOSITORY https://github.com/Dav1dde/glad.git
@@ -17,7 +22,7 @@ set(GLAD_PROFILE "core" CACHE STRING "OpenGL profile")
 set(GLAD_API "gl=3.3" CACHE STRING "API type/version")
 set(GLAD_GENERATOR "c" CACHE STRING "Language to generate")
 
-# Fetch Lua (source only, no CMake build)
+# Fetch Lua
 FetchContent_Declare(
     lua
     GIT_REPOSITORY https://github.com/lua/lua.git
@@ -25,8 +30,15 @@ FetchContent_Declare(
 )
 FetchContent_Populate(lua)
 
-# Lua doesn't have a CMake build, so we manually compile it
-# List Lua source files (core and libraries, excluding lua.c and luac.c)
+# Fetch miniz
+FetchContent_Declare(
+    miniz
+    GIT_REPOSITORY https://github.com/richgel999/miniz.git
+    GIT_TAG 3.0.2
+)
+FetchContent_MakeAvailable(miniz)
+
+# Lua source files
 set(LUA_SRC
     ${lua_SOURCE_DIR}/lapi.c
     ${lua_SOURCE_DIR}/lauxlib.c
@@ -65,38 +77,57 @@ set(LUA_SRC
 # Create a static Lua library
 add_library(lua STATIC ${LUA_SRC})
 target_include_directories(lua PUBLIC 
-  ${lua_SOURCE_DIR}  
+    ${lua_SOURCE_DIR}
 )
 
-# testing for opengl and software render toggle
+# Testing for OpenGL
 set(USE_OPENGL ON)
+
 # lrcgl library
-add_library(lrcgl SHARED src/lib.c)
-# glad
-target_link_libraries(lrcgl PRIVATE 
-  glad
-  lua
+add_library(lrcgl SHARED 
+    src/lib.c
+    src/module_lua.c
+    src/module_opengl.c
+
+    ${miniz_SOURCE_DIR}/miniz.c
+    ${miniz_SOURCE_DIR}/miniz_tdef.c
+    ${miniz_SOURCE_DIR}/miniz_tinfl.c
+    ${miniz_SOURCE_DIR}/miniz_zip.c
 )
-# opengl
+
+# Link libraries
+target_link_libraries(lrcgl PRIVATE 
+    glad
+    lua
+)
+
+# OpenGL
 if(WIN32 AND USE_OPENGL)
     target_link_libraries(lrcgl PRIVATE opengl32)
 endif()
-# include folder for headers
+
+# Include directories
 target_include_directories(lrcgl PRIVATE
     ${libretro-common_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${glad_SOURCE_DIR}/include
     ${lua_SOURCE_DIR}
+    ${miniz_SOURCE_DIR}
+    ${miniz_BINARY_DIR}
 )
-# compile definitions
-target_compile_definitions(lrcgl PRIVATE _CRT_SECURE_NO_WARNINGS)
+
+# Compile definitions
+target_compile_definitions(lrcgl PRIVATE 
+    _CRT_SECURE_NO_WARNINGS
+)
 if(USE_OPENGL)
     target_compile_definitions(lrcgl PRIVATE USE_OPENGL)
 endif()
+
 # lrcgl.dll
 set_target_properties(lrcgl PROPERTIES
     PREFIX ""
-    OUTPUT_NAME "libretro_core_glad_lua" # file name
+    OUTPUT_NAME "libretro_core_glad_lua"
     SUFFIX ".dll"
 )
 set_property(TARGET lrcgl PROPERTY C_STANDARD 99)
