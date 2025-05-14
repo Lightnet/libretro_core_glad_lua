@@ -8,6 +8,19 @@ This project is licensed under the MIT License. See LICENSE for details.
 
 # Information:
   Testing lua script and loading content data.
+```c
+// System info
+void retro_get_system_info(struct retro_system_info *info) {
+   memset(info, 0, sizeof(*info));
+   info->library_name = "Libretro Core Glad Lua";
+   info->library_version = "1.0";
+   info->need_fullpath = true;
+   info->block_extract = true;
+   info->valid_extensions = "zip";
+   printf("System info: %s v%s", info->library_name, info->library_version);
+}
+```
+
 
 
 # Project Overview

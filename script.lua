@@ -1,7 +1,7 @@
 -- script.lua
-local RETRO_DEVICE_JOYPAD = 1
-local RETRO_DEVICE_ID_JOYPAD_A = 8
-local RETRO_DEVICE_ID_JOYPAD_B = 0
+-- local RETRO_DEVICE_JOYPAD = 1 --remove is add in global variable c to lua api 
+-- local RETRO_DEVICE_ID_JOYPAD_A = 8
+-- local RETRO_DEVICE_ID_JOYPAD_B = 0
 
 function update(time)
     print("Lua update called with time: " .. time)
@@ -29,5 +29,5 @@ function update(time)
     end
 
     draw_quad(x, y, width, height, r, g, b, 1.0)
-    -- print("Drew quad at x=" .. x .. ", y=" .. y .. ", w=" .. width .. ", h=" .. height)
+    print("Drew quad at x=" .. x .. ", y=" .. y .. ", w=" .. width .. ", h=" .. height)
 end

@@ -508,8 +508,6 @@ void retro_run(void) {
    }
 }
 
-
-
 // Load special game
 bool retro_load_game_special(unsigned game_type, const struct retro_game_info *info, size_t num_info) {
     core_log(RETRO_LOG_INFO, "retro_load_game_special called with game_type=%u, num_info=%zu", game_type, num_info);
