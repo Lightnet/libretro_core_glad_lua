@@ -21,7 +21,25 @@ static bool use_default_fbo = false;
 // External logging function
 extern void core_log(enum retro_log_level level, const char *fmt, ...);
 
-// Textured vertex shader
+// Solid vertex shader with MVP matrix
+static const char *solid_vertex_shader_src =
+   "#version 330 core\n"
+   "layout(location = 0) in vec2 position;\n"
+   "uniform mat4 mvp;\n"
+   "void main() {\n"
+   "   gl_Position = mvp * vec4(position, 0.0, 1.0);\n"
+   "}\n";
+
+// Solid fragment shader
+static const char *solid_fragment_shader_src =
+   "#version 330 core\n"
+   "out vec4 frag_color;\n"
+   "uniform vec4 color;\n"
+   "void main() {\n"
+   "   frag_color = color;\n"
+   "}\n";
+
+// Text vertex shader (unchanged)
 static const char *text_vertex_shader_src =
    "#version 330 core\n"
    "layout(location = 0) in vec2 position;\n"
@@ -32,7 +50,7 @@ static const char *text_vertex_shader_src =
    "   v_texcoord = texcoord;\n"
    "}\n";
 
-// Textured fragment shader
+// Text fragment shader (unchanged)
 static const char *text_fragment_shader_src =
    "#version 330 core\n"
    "in vec2 v_texcoord;\n"
@@ -42,22 +60,6 @@ static const char *text_fragment_shader_src =
    "void main() {\n"
    "   float alpha = texture(font_texture, v_texcoord).r;\n"
    "   frag_color = vec4(color.rgb, color.a * alpha);\n"
-   "}\n";
-
-// Shaders (GLSL 330 core)
-static const char *solid_vertex_shader_src =
-   "#version 330 core\n"
-   "layout(location = 0) in vec2 position;\n"
-   "void main() {\n"
-   "   gl_Position = vec4(position, 0.0, 1.0);\n"
-   "}\n";
-
-static const char *solid_fragment_shader_src =
-   "#version 330 core\n"
-   "out vec4 frag_color;\n"
-   "uniform vec4 color;\n"
-   "void main() {\n"
-   "   frag_color = color;\n"
    "}\n";
 
 
@@ -97,7 +99,6 @@ static void create_font_texture(void) {
 
 // Create shader program
 static GLuint create_shader_program(const char *vs_src, const char *fs_src, const char *name) {
-   // [Unchanged, same as original]
    GLuint vs = glCreateShader(GL_VERTEX_SHADER);
    glShaderSource(vs, 1, &vs_src, NULL);
    glCompileShader(vs);
@@ -138,6 +139,7 @@ static GLuint create_shader_program(const char *vs_src, const char *fs_src, cons
    core_log(RETRO_LOG_INFO, "%s shader program created successfully", name);
    return program;
 }
+
 
 void module_opengl_set_callbacks(retro_hw_get_proc_address_t proc_address,
                                 retro_hw_get_current_framebuffer_t framebuffer_cb,
@@ -321,11 +323,10 @@ void module_opengl_draw_solid_quad(float x, float y, float w, float h,
    glm_translate(model, (vec3){x, y, 0.0f});
    glm_rotate(model, glm_rad(rotation), (vec3){0.0f, 0.0f, 1.0f});
 
-   // Orthographic projection
-   glm_ortho(0.0f, vp_width, vp_height, 0.0f, -1.0f, 1.0f, proj);
+   // Orthographic projection (centered, top-left origin for RetroArch)
+   glm_ortho(-vp_width / 2.0f, vp_width / 2.0f, vp_height / 2.0f, -vp_height / 2.0f, -1.0f, 1.0f, proj);
 
    // Compute MVP matrix
-   glm_mat4_identity(mvp);
    glm_mat4_mul(proj, view, mvp);
    glm_mat4_mul(mvp, model, mvp);
 
@@ -350,7 +351,6 @@ void module_opengl_draw_solid_quad(float x, float y, float w, float h,
 
    core_log(RETRO_LOG_DEBUG, "Drew solid quad at (%f, %f), size (%f, %f), rotation %f", x, y, w, h, rotation);
 }
-
 
 
 bool module_opengl_bind_framebuffer(void) {
@@ -388,11 +388,13 @@ void module_opengl_set_viewport(void) {
    module_opengl_check_error("glViewport");
 }
 
+
 void module_opengl_clear(void) {
    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
    module_opengl_check_error("glClear");
 }
+
 
 void module_opengl_check_error(const char *context) {
    GLenum err;

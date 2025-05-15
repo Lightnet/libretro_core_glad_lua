@@ -3,15 +3,21 @@
 -- local RETRO_DEVICE_ID_JOYPAD_A = 8
 -- local RETRO_DEVICE_ID_JOYPAD_B = 0
 
+local rotation = 0
+
 function update(time)
     print("Lua update called with time: " .. time)
 
-    -- Existing quad rendering
+    -- Quad rendering
+    local max_size = 300 -- Max size to fit when rotated (diagonal < 512)
     local scale = 0.8 + 0.2 * math.sin(time * 2.0)
-    local width = 512 * scale
-    local height = 512 * scale
-    local x = (512 - width) * 0.5
-    local y = (512 - height) * 0.5
+    local width = max_size * scale
+    local height = max_size * scale
+    -- local x = 256 -- Center of screen (512 / 2)
+    -- local y = 256
+    local x = 100
+    local y = 100
+    rotation = rotation + 1 -- Fixed 45-degree rotation for diamond shape
 
     local r, g, b = 0.0, 0.5, 0.0 -- Default green
     local a_pressed = get_input(RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_A)
@@ -26,10 +32,12 @@ function update(time)
         r, g = 1.0, 0.0
     end
 
-    draw_quad(x, y, width, height, r, g, b, 1.0)
-    print("Drew quad at x=" .. x .. ", y=" .. y .. ", w=" .. width .. ", h=" .. height)
+    draw_quad(x, y, width, height, rotation, r, g, b, 1.0)
+    print("Drew quad at x=" .. x .. ", y=" .. y .. ", w=" .. width .. ", h=" .. height .. ", rotation=" .. rotation)
 
     -- Render "Hello World" text
-    draw_text(100, 100, "Hello World", 1.0, 1.0, 1.0, 1.0) -- White text at (100, 100)
+    draw_text(100, 100, "Hello World", 1.0, 1.0, 1.0, 1.0)
     print("Drew text 'Hello World' at x=100, y=100")
 end
+
+
