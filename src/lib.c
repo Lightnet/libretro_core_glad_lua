@@ -240,8 +240,6 @@ bool extract_asset_from_zip(const char *asset_name, char **asset_data, size_t *a
     return true;
 }
 
-
-
 // Set environment
 void retro_set_environment(retro_environment_t cb) {
    environ_cb = cb;

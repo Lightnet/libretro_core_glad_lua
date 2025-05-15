@@ -5,9 +5,20 @@ This project is licensed under the MIT License. See LICENSE for details.
 
 # Status:
 - work in progres.
+- place holder docs.
 
 # Information:
-  Testing lua script and loading content data.
+  Working toward lua script to compress file into zip format.
+
+# Goals:
+  - create lua opengl
+  - lua input
+  - image load texture
+  - mesh
+
+
+# Libretro core api:
+
 ```c
 // System info
 void retro_get_system_info(struct retro_system_info *info) {
@@ -21,27 +32,29 @@ void retro_get_system_info(struct retro_system_info *info) {
 }
 ```
 
-
-
 # Project Overview
-The libretro core and opengl glad is a minimal, content-less Libretro core that demonstrates hardware-accelerated rendering using OpenGL 3.3 and the GLAD library within the RetroArch frontend. The core renders a pulsing green quad (optionally changing to blue or red based on joypad input) in a 512x512 framebuffer, scaled to a 960x720 window by RetroArch. It serves as an educational example for building Libretro cores with modern OpenGL, showcasing:
+The libretro core and opengl glad is a minimal. Libretro core that demonstrates hardware-accelerated rendering using OpenGL 3.3 and the GLAD library within the RetroArch frontend. The core renders (work in progress) in a 512x512 framebuffer, scaled to a 960x720 window by RetroArch. It serves as an educational example for building Libretro cores with modern OpenGL, showcasing:
 
-- Hardware Rendering: Uses OpenGL 3.3 core profile with GLAD for function loading.
+- Hardware Rendering: Uses OpenGL 3.3 core profile with Glad for function loading.
 - Framebuffer Management: Renders to a frontend-provided framebuffer (FBO) or falls back to the default FBO.
 - Input Handling: Changes quad color based on joypad inputs (A for blue, B for red).
-- Animation: Implements a simple pulsing animation for the quad size.
-- Content-less Operation: Runs without ROMs or game content, ideal for prototyping.
-
-This project is designed for developers learning the Libretro API, OpenGL integration, and RetroArch’s rendering pipeline. The codebase is lightweight, well-documented, and extensible for adding features like textures, complex animations, or save states.
+- It need ROMs or game content in compress file archive that has script.lua as default entry point.
 
 # Repository Structure
 
 ```text
-libretro_core_glad/
+libretro_core_glad_lua/
+├── include/
+│   ├── font.h
+│   ├── module_lua.h
+│   └── module_opengl.h
 ├── src/
-│   └── lib.c              # Main core implementation (Libretro API, OpenGL rendering)
+│   ├── lib.c              # Main core implementation (Libretro API)
+│   ├── module_lua.c       # ( Lua Script )
+│   └── module_opengl.c    # (OpenGL rendering)
 ├── build/
-└── README.md              # Brief project overview and setup instructions
+├── README.md              # Brief project overview and setup instructions
+└── script.md              # simple test for rom or content entry point
 ```
 
 script.lua
@@ -95,8 +108,10 @@ end
 - Compiler: MSVC (Visual Studio 2019/2022) with C++ support.
 - Git: For cloning the repository and submodules.
 - Dependencies:
-    - GLAD (from cmake repo).
-    - Libretro headers (from cmake repo).
+    - glad header ( cmake repo )
+    - Libretro headers ( cmake repo )
+    - lua ( cmake repo )
+    - miniz header ( cmake repo )
 
 ## Installation
 
@@ -151,7 +166,7 @@ cd "path"/RetroArch-Win64/retroarch.exe --verbose -L cores\hello_world_core.dll
 
 ## Core Functionality
 The core implements a minimal Libretro core that:
-Initializes an OpenGL 3.3 context using GLAD.
+Initializes an OpenGL 3.3 context using glad.
     
 - Renders a single quad in a 512x512 framebuffer, scaled to 960x720 by RetroArch.
 - Supports content-less operation (no ROMs required).
@@ -165,19 +180,19 @@ Initializes an OpenGL 3.3 context using GLAD.
     - Sets up hardware rendering via RETRO_ENVIRONMENT_SET_HW_RENDER.
     - Handles input via retro_set_input_poll and retro_set_input_state.
 - OpenGL Rendering:
-    - Uses GLAD to load OpenGL 3.3 core profile functions.
+    - Uses glad to load OpenGL 3.3 core profile functions.
     - Creates a shader program for solid-color rendering.
     - Draws a quad using vertex buffer objects (VBOs) and vertex array objects (VAOs).
     - Renders to a frontend-provided FBO or the default FBO (0).
-- GLAD Integration:
-    - GLAD generates OpenGL function pointers at runtime.
+- glad Integration:
+    - glad generates OpenGL function pointers at runtime.
     - Loaded via gladLoadGLLoader((GLADloadproc)get_proc_address) in init_opengl.
 - Input and Animation:
     - Polls joypad input to change quad color.
     - Updates quad size using a sine-based animation (sinf(animation_time * 2.0f)).
 
 ## Logic Design
-The core’s logic is structured around the Libretro lifecycle, interacting with RetroArch and GLAD. Below is a detailed explanation with a visual diagram.
+The core’s logic is structured around the Libretro lifecycle, interacting with RetroArch and glad. Below is a detailed explanation with a visual diagram.
 
 Logic Flow:
 
@@ -189,7 +204,7 @@ Logic Flow:
     - Stores get_current_framebuffer and get_proc_address callbacks.
         
 3. OpenGL Setup (init_opengl):
-    - Loads GLAD, creates shaders, and sets up VBO/VAO.
+    - Loads glad, creates shaders, and sets up VBO/VAO.
         
 4. Frame Rendering (retro_run):
     - Polls input.
@@ -236,32 +251,32 @@ Logic Flow:
 ## Description:
 - RetroArch: Manages the core lifecycle, provides callbacks (get_current_framebuffer, get_proc_address), and handles windowing/input.  
 - Libretro Core: Implements the Libretro API, orchestrates rendering, and manages OpenGL state.
-- GLAD/OpenGL: Loads OpenGL functions and executes rendering commands.
+- glad/OpenGL: Loads OpenGL functions and executes rendering commands.
 
 ## GLAD Integration
 
-GLAD is used to load OpenGL function pointers at runtime, ensuring compatibility across platforms. Here’s how it integrates with the core:
+Glad is used to load OpenGL function pointers at runtime, ensuring compatibility across platforms. Here’s how it integrates with the core:
 
 ## Steps:
 
 1. Callback Acquisition:
     - In retro_load_game, the core stores hw_render.get_proc_address from RetroArch.
         
-2. GLAD Initialization:
-    - In init_opengl, GLAD is loaded using gladLoadGLLoader((GLADloadproc)get_proc_address).
+2. Glad Initialization:
+    - In init_opengl, Glad is loaded using gladLoadGLLoader((GLADloadproc)get_proc_address).
         
 3. Function Usage:
-    - GLAD provides OpenGL 3.3 core profile functions (e.g., glCreateShader, glBindFramebuffer).  
+    - Glad provides OpenGL 3.3 core profile functions (e.g., glCreateShader, glBindFramebuffer).  
     - The core uses these to set up shaders, VBOs, and render the quad.
         
 4. Error Checking:
-    - check_gl_error uses GLAD-loaded glGetError to detect issues.
+    - check_gl_error uses Glad-loaded glGetError to detect issues.
 
 # Visual Diagram
 
 ```plaintext
 +-------------------+       +-------------------+       +-------------------+
-|   RetroArch       |       |   Libretro Core   |       |   GLAD            |
+|   RetroArch       |       |   Libretro Core   |       |   Glad            |
 |                   |       |                   |       |                   |
 +-------------------+       +-------------------+       +-------------------+
 | Provide           | ----> | retro_load_game() |       |                   |
@@ -279,8 +294,8 @@ GLAD is used to load OpenGL function pointers at runtime, ensuring compatibility
 ## Description:
 
 - RetroArch: Supplies get_proc_address to load OpenGL function pointers.    
-- Libretro Core: Calls GLAD and uses loaded functions for rendering.
-- GLAD: Dynamically loads OpenGL 3.3 functions via get_proc_address.
+- Libretro Core: Calls Glad and uses loaded functions for rendering.
+- Glad: Dynamically loads OpenGL 3.3 functions via get_proc_address.
 
 ## RetroArch and Libretro Lifecycle
 
@@ -377,22 +392,6 @@ The Libretro API is a cross-platform interface for emulators, game engines, and 
     - Check core.log in the project root for detailed logs.
     - Use RetroArch’s verbose output (--verbose).
         
-
-## Extending the Core
-
-1. Add Textures:
-    - Use stb_image.h to load PNG images.
-    - Update shaders to sample textures (see previous responses).
-        
-2. Complex Animations:
-    - Move or rotate the quad based on animation_time.
-        
-3. Multiple Quads:
-    - Render additional quads with different colors/positions.
-        
-4. Save States:
-    - Implement retro_serialize/retro_unserialize to save animation_time and color.
-
 # Credits:
 
 This project was developed with the help of the following resources and references:
