@@ -21,6 +21,10 @@ void module_opengl_draw_solid_quad(float x, float y, float w, float h,
                                    float r, float g, float b, float a,
                                    float vp_width, float vp_height);
 
+void module_opengl_draw_custom_quad(float *vertices, int num_vertices, float x, float y,
+                                   float rotation, float r, float g, float b, float a,
+                                   float vp_width, float vp_height);
+
 // Bind framebuffer for rendering
 bool module_opengl_bind_framebuffer(void);
 

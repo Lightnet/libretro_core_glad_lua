@@ -2,6 +2,7 @@
 #include "module_lua.h"
 #include "module_opengl.h"
 #include <stdio.h>
+#include <stdlib.h>
 
 // Global variables
 static lua_State *L = NULL;
@@ -38,6 +39,50 @@ static int lua_draw_quad(lua_State *L) {
    module_opengl_draw_solid_quad(x, y, w, h, rotation, r, g, b, a, 512, 512);
    return 0;
 }
+
+static int lua_draw_custom_quad(lua_State *L) {
+    // Check if the first argument is a table (vertices)
+    luaL_checktype(L, 1, LUA_TTABLE);
+    float x = (float)luaL_checknumber(L, 2); // Center x
+    float y = (float)luaL_checknumber(L, 3); // Center y
+    float rotation = (float)luaL_checknumber(L, 4); // Rotation in degrees
+    float r = (float)luaL_checknumber(L, 5);
+    float g = (float)luaL_checknumber(L, 6);
+    float b = (float)luaL_checknumber(L, 7);
+    float a = (float)luaL_checknumber(L, 8);
+
+    // Get the number of vertices
+    int num_vertices = lua_rawlen(L, 1);
+    if (num_vertices < 3) {
+        core_log(RETRO_LOG_ERROR, "At least 3 vertices required for custom quad");
+        return 0;
+    }
+
+    // Allocate vertex array (2 floats per vertex: x, y)
+    float *vertices = (float *)malloc(num_vertices * 2 * sizeof(float));
+    if (!vertices) {
+        core_log(RETRO_LOG_ERROR, "Failed to allocate memory for vertices");
+        return 0;
+    }
+
+    // Read vertices from Lua table
+    for (int i = 0; i < num_vertices; i++) {
+        lua_rawgeti(L, 1, i + 1); // Lua tables are 1-indexed
+        luaL_checktype(L, -1, LUA_TTABLE);
+        lua_rawgeti(L, -1, 1); // x
+        lua_rawgeti(L, -2, 2); // y
+        vertices[i * 2] = (float)luaL_checknumber(L, -2);
+        vertices[i * 2 + 1] = (float)luaL_checknumber(L, -1);
+        lua_pop(L, 3); // Pop x, y, and vertex table
+    }
+
+    // Call a modified OpenGL function to render the vertices
+    module_opengl_draw_custom_quad(vertices, num_vertices, x, y, rotation, r, g, b, a, 512, 512);
+
+    free(vertices);
+    return 0;
+}
+
 
 // Lua-exposed function: draw_text(x, y, text, r, g, b, a)
 static int lua_draw_text(lua_State *L) {
@@ -141,6 +186,7 @@ bool module_lua_init(void) {
    lua_register(L, "draw_quad", lua_draw_quad);
    lua_register(L, "get_input", lua_get_input);
    lua_register(L, "draw_text", lua_draw_text); // Add text function
+   lua_register(L, "draw_custom_quad", lua_draw_custom_quad);
 
    // Register Libretro constants
    register_libretro_constants(L);

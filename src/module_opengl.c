@@ -63,7 +63,7 @@ static const char *text_fragment_shader_src =
    "   frag_color = vec4(color.rgb, color.a * alpha);\n"
    "}\n";
 
-// Create shader program (unchanged)
+// Create shader program
 static GLuint create_shader_program(const char *vs_src, const char *fs_src, const char *name) {
    GLuint vs = glCreateShader(GL_VERTEX_SHADER);
    glShaderSource(vs, 1, &vs_src, NULL);
@@ -106,7 +106,7 @@ static GLuint create_shader_program(const char *vs_src, const char *fs_src, cons
    return program;
 }
 
-// Create font texture (unchanged)
+// Create font texture 
 static void create_font_texture(void) {
    uint8_t texture_data[760 * 8] = {0};
    const int chars_per_row = 95;
@@ -298,6 +298,76 @@ void module_opengl_draw_solid_quad(float x, float y, float w, float h,
 
    core_log(RETRO_LOG_DEBUG, "Drew solid quad at (%f, %f), size (%f, %f), rotation %f", x, y, w, h, rotation);
 }
+
+
+void module_opengl_draw_custom_quad(float *vertices, int num_vertices, float x, float y,
+                                   float rotation, float r, float g, float b, float a,
+                                   float vp_width, float vp_height) {
+    if (!glIsProgram(solid_shader_program) || !glIsVertexArray(solid_vao) || !glIsBuffer(vbo)) {
+        core_log(RETRO_LOG_ERROR, "Invalid GL state in draw_custom_quad");
+        return;
+    }
+
+    if (num_vertices != 4) {
+        core_log(RETRO_LOG_ERROR, "draw_custom_quad expects exactly 4 vertices, got %d", num_vertices);
+        return;
+    }
+
+    // Log vertices
+    for (int i = 0; i < num_vertices; i++) {
+        core_log(RETRO_LOG_DEBUG, "Vertex %d: (%f, %f)", i, vertices[i * 2], vertices[i * 2 + 1]);
+    }
+
+    // Define triangles explicitly: 0-1-2 and 1-2-3
+    float triangle_vertices[] = {
+        vertices[0], vertices[1], // Vertex 0
+        vertices[2], vertices[3], // Vertex 1
+        vertices[4], vertices[5], // Vertex 2
+        vertices[2], vertices[3], // Vertex 1
+        vertices[4], vertices[5], // Vertex 2
+        vertices[6], vertices[7]  // Vertex 3
+    };
+
+    mat4 model, view, proj, mvp;
+    glm_mat4_identity(model);
+    glm_mat4_identity(view);
+    glm_mat4_identity(proj);
+    glm_translate(model, (vec3){x, y, 0.0f});
+    glm_rotate(model, glm_rad(rotation), (vec3){0.0f, 0.0f, 1.0f});
+    glm_ortho(-vp_width / 2.0f, vp_width / 2.0f, vp_height / 2.0f, -vp_height / 2.0f, -1.0f, 1.0f, proj);
+    glm_mat4_mul(proj, view, mvp);
+    glm_mat4_mul(mvp, model, mvp);
+
+    // Log transformed vertices
+    for (int i = 0; i < 6; i++) {
+        vec4 v = {triangle_vertices[i * 2], triangle_vertices[i * 2 + 1], 0.0f, 1.0f};
+        vec4 out;
+        glm_mat4_mulv(mvp, v, out);
+        core_log(RETRO_LOG_DEBUG, "Transformed vertex %d: (%f, %f, %f, %f)", i, out[0], out[1], out[2], out[3]);
+    }
+
+    glUseProgram(solid_shader_program);
+    glBindVertexArray(solid_vao);
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, 6 * 2 * sizeof(float), triangle_vertices);
+
+    GLint mvp_loc = glGetUniformLocation(solid_shader_program, "mvp");
+    glUniformMatrix4fv(mvp_loc, 1, GL_FALSE, (float *)mvp);
+
+    GLint color_loc = glGetUniformLocation(solid_shader_program, "color");
+    glUniform4f(color_loc, r, g, b, a);
+
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    glBindVertexArray(0);
+    glUseProgram(0);
+    module_opengl_check_error("draw_custom_quad");
+
+    core_log(RETRO_LOG_DEBUG, "Drew custom quad at (%f, %f), vertices=%d, rotation=%f", x, y, num_vertices, rotation);
+}
+
+
 
 void module_opengl_draw_text(float x, float y, const char *text,
                              float r, float g, float b, float a,
