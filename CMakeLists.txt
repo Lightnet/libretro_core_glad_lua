@@ -38,6 +38,14 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(miniz)
 
+# Fetch CGLM
+FetchContent_Declare(
+    cglm
+    GIT_REPOSITORY https://github.com/recp/cglm.git
+    GIT_TAG v0.9.4
+)
+FetchContent_MakeAvailable(cglm)
+
 # Lua source files
 set(LUA_SRC
     ${lua_SOURCE_DIR}/lapi.c
@@ -85,20 +93,20 @@ set(USE_OPENGL ON)
 
 # lrcgl library
 add_library(lrcgl SHARED 
-    src/lib.c
-    src/module_lua.c
-    src/module_opengl.c
-
-    ${miniz_SOURCE_DIR}/miniz.c
-    ${miniz_SOURCE_DIR}/miniz_tdef.c
-    ${miniz_SOURCE_DIR}/miniz_tinfl.c
-    ${miniz_SOURCE_DIR}/miniz_zip.c
+  src/lib.c
+  src/module_lua.c
+  src/module_opengl.c
+  ${miniz_SOURCE_DIR}/miniz.c
+  ${miniz_SOURCE_DIR}/miniz_tdef.c
+  ${miniz_SOURCE_DIR}/miniz_tinfl.c
+  ${miniz_SOURCE_DIR}/miniz_zip.c
 )
 
 # Link libraries
 target_link_libraries(lrcgl PRIVATE 
-    glad
-    lua
+  glad
+  lua
+  cglm
 )
 
 # OpenGL
@@ -108,26 +116,27 @@ endif()
 
 # Include directories
 target_include_directories(lrcgl PRIVATE
-    ${libretro-common_SOURCE_DIR}/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${glad_SOURCE_DIR}/include
-    ${lua_SOURCE_DIR}
-    ${miniz_SOURCE_DIR}
-    ${miniz_BINARY_DIR}
+  ${libretro-common_SOURCE_DIR}/include
+  ${CMAKE_CURRENT_SOURCE_DIR}/include
+  ${glad_SOURCE_DIR}/include
+  ${lua_SOURCE_DIR}
+  ${miniz_SOURCE_DIR}
+  ${miniz_BINARY_DIR}
+  ${cglm_SOURCE_DIR}/include
 )
 
 # Compile definitions
 target_compile_definitions(lrcgl PRIVATE 
-    _CRT_SECURE_NO_WARNINGS
+  _CRT_SECURE_NO_WARNINGS
 )
 if(USE_OPENGL)
-    target_compile_definitions(lrcgl PRIVATE USE_OPENGL)
+  target_compile_definitions(lrcgl PRIVATE USE_OPENGL)
 endif()
 
 # lrcgl.dll
 set_target_properties(lrcgl PROPERTIES
-    PREFIX ""
-    OUTPUT_NAME "libretro_core_glad_lua"
-    SUFFIX ".dll"
+  PREFIX ""
+  OUTPUT_NAME "libretro_core_glad_lua"
+  SUFFIX ".dll"
 )
 set_property(TARGET lrcgl PROPERTY C_STANDARD 99)

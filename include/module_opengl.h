@@ -15,8 +15,9 @@ void module_opengl_init(void);
 // Deinitialize OpenGL
 void module_opengl_deinit(void);
 
-// Draw a solid quad
+// Draw a solid quad with rotation
 void module_opengl_draw_solid_quad(float x, float y, float w, float h,
+                                   float rotation, // New: rotation in degrees
                                    float r, float g, float b, float a,
                                    float vp_width, float vp_height);
 

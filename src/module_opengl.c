@@ -2,6 +2,7 @@
 #include "font.h"
 #include <stdio.h>
 #include <string.h>
+#include <cglm/cglm.h> // Include CGLM
 
 // Framebuffer dimensions
 #define HW_WIDTH 512
@@ -177,35 +178,28 @@ void module_opengl_init(void) {
       return;
    }
 
-   // Create solid shader
    solid_shader_program = create_shader_program(solid_vertex_shader_src, solid_fragment_shader_src, "Solid");
    if (!solid_shader_program) {
       core_log(RETRO_LOG_ERROR, "Failed to create solid shader program");
       return;
    }
 
-   // Create text shader
    text_shader_program = create_shader_program(text_vertex_shader_src, text_fragment_shader_src, "Text");
    if (!text_shader_program) {
       core_log(RETRO_LOG_ERROR, "Failed to create text shader program");
       return;
    }
 
-   // Create font texture
    create_font_texture();
 
-   // Set up VAO and VBO
    glGenVertexArrays(1, &vao);
    glBindVertexArray(vao);
    glGenBuffers(1, &vbo);
    glBindBuffer(GL_ARRAY_BUFFER, vbo);
-   // Allocate for position (2 floats) + texcoord (2 floats) per vertex
    glBufferData(GL_ARRAY_BUFFER, 4 * 4 * sizeof(float), NULL, GL_DYNAMIC_DRAW);
 
-   // Position attribute
    glEnableVertexAttribArray(0);
    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void *)0);
-   // Texcoord attribute
    glEnableVertexAttribArray(1);
    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void *)(2 * sizeof(float)));
 
@@ -225,7 +219,6 @@ void module_opengl_init(void) {
 }
 
 
-
 void module_opengl_deinit(void) {
    if (gl_initialized) {
       glDeleteProgram(solid_shader_program);
@@ -237,6 +230,7 @@ void module_opengl_deinit(void) {
       core_log(RETRO_LOG_INFO, "OpenGL deinitialized");
    }
 }
+
 
 void module_opengl_draw_text(float x, float y, const char *text,
                             float r, float g, float b, float a,
@@ -301,95 +295,114 @@ void module_opengl_draw_text(float x, float y, const char *text,
 }
 
 
-
 void module_opengl_draw_solid_quad(float x, float y, float w, float h,
-                                   float r, float g, float b, float a,
+                                   float rotation, float r, float g, float b, float a,
                                    float vp_width, float vp_height) {
-  if (!glIsProgram(solid_shader_program) || !glIsVertexArray(vao) || !glIsBuffer(vbo)) {
-    // core_log(RETRO_LOG_ERROR, "Invalid GL state in draw_solid_quad");
-    return;
-  }
+   if (!glIsProgram(solid_shader_program) || !glIsVertexArray(vao) || !glIsBuffer(vbo)) {
+      core_log(RETRO_LOG_ERROR, "Invalid GL state in draw_solid_quad");
+      return;
+   }
 
-  float x0 = (x / vp_width) * 2.0f - 1.0f;
-  float y0 = 1.0f - (y / vp_height) * 2.0f;
-  float x1 = ((x + w) / vp_width) * 2.0f - 1.0f;
-  float y1 = 1.0f - ((y + h) / vp_height) * 2.0f;
+   // Define quad vertices in local space (centered at origin)
+   float vertices[] = {
+      -w / 2.0f, -h / 2.0f, // Bottom-left
+       w / 2.0f, -h / 2.0f, // Bottom-right
+      -w / 2.0f,  h / 2.0f, // Top-left
+       w / 2.0f,  h / 2.0f  // Top-right
+   };
 
-  float vertices[] = { x0, y0, x1, y0, x0, y1, x1, y1 };
-  //  core_log(RETRO_LOG_DEBUG, "Quad vertices: (%f,%f), (%f,%f), (%f,%f), (%f,%f)",
-  //           vertices[0], vertices[1], vertices[2], vertices[3], vertices[4], vertices[5], vertices[6], vertices[7]);
+   // Set up transformation matrices
+   mat4 model, view, proj, mvp;
+   glm_mat4_identity(model);
+   glm_mat4_identity(view);
+   glm_mat4_identity(proj);
 
-  glUseProgram(solid_shader_program);
-  glBindVertexArray(vao);
-  glBindBuffer(GL_ARRAY_BUFFER, vbo);
-  glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(vertices), vertices);
+   // Model matrix: translate to (x, y) and rotate
+   glm_translate(model, (vec3){x, y, 0.0f});
+   glm_rotate(model, glm_rad(rotation), (vec3){0.0f, 0.0f, 1.0f});
 
-  GLint color_loc = glGetUniformLocation(solid_shader_program, "color");
-  glUniform4f(color_loc, r, g, b, a);
+   // Orthographic projection
+   glm_ortho(0.0f, vp_width, vp_height, 0.0f, -1.0f, 1.0f, proj);
 
-  glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+   // Compute MVP matrix
+   glm_mat4_identity(mvp);
+   glm_mat4_mul(proj, view, mvp);
+   glm_mat4_mul(mvp, model, mvp);
 
-  glBindBuffer(GL_ARRAY_BUFFER, 0);
-  glBindVertexArray(0);
-  glUseProgram(0);
-  module_opengl_check_error("draw_solid_quad");
+   glUseProgram(solid_shader_program);
+   glBindVertexArray(vao);
+   glBindBuffer(GL_ARRAY_BUFFER, vbo);
+   glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(vertices), vertices);
 
-  //  core_log(RETRO_LOG_DEBUG, "Drew solid quad at (%f, %f), size (%f, %f)", x, y, w, h);
+   // Set MVP matrix uniform
+   GLint mvp_loc = glGetUniformLocation(solid_shader_program, "mvp");
+   glUniformMatrix4fv(mvp_loc, 1, GL_FALSE, (float *)mvp);
+
+   GLint color_loc = glGetUniformLocation(solid_shader_program, "color");
+   glUniform4f(color_loc, r, g, b, a);
+
+   glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+
+   glBindBuffer(GL_ARRAY_BUFFER, 0);
+   glBindVertexArray(0);
+   glUseProgram(0);
+   module_opengl_check_error("draw_solid_quad");
+
+   core_log(RETRO_LOG_DEBUG, "Drew solid quad at (%f, %f), size (%f, %f), rotation %f", x, y, w, h, rotation);
 }
+
+
 
 bool module_opengl_bind_framebuffer(void) {
-  GLuint fbo = 0;
-  if (use_default_fbo || !get_current_framebuffer) {
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    // core_log(RETRO_LOG_INFO, "Using default framebuffer (0)");
-  } else {
-    fbo = (GLuint)(uintptr_t)(get_current_framebuffer());
-    // core_log(RETRO_LOG_INFO, "get_current_framebuffer returned FBO: %u", fbo);
-    if (fbo == 0) {
-      //  core_log(RETRO_LOG_WARN, "get_current_framebuffer returned 0, falling back to default framebuffer");
-       glBindFramebuffer(GL_FRAMEBUFFER, 0);
-       use_default_fbo = true;
-    } else {
-       glBindFramebuffer(GL_FRAMEBUFFER, fbo);
-       GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
-       if (status != GL_FRAMEBUFFER_COMPLETE) {
-          // core_log(RETRO_LOG_ERROR, "Framebuffer %u incomplete (status: %d), falling back to default framebuffer", fbo, status);
-          glBindFramebuffer(GL_FRAMEBUFFER, 0);
-          use_default_fbo = true;
-       } else {
-          // core_log(RETRO_LOG_INFO, "Successfully bound FBO: %u", fbo);
-          return true;
-       }
-    }
-  }
-  return false;
+   GLuint fbo = 0;
+   if (use_default_fbo || !get_current_framebuffer) {
+      glBindFramebuffer(GL_FRAMEBUFFER, 0);
+      core_log(RETRO_LOG_INFO, "Using default framebuffer (0)");
+   } else {
+      fbo = (GLuint)(uintptr_t)(get_current_framebuffer());
+      core_log(RETRO_LOG_INFO, "get_current_framebuffer returned FBO: %u", fbo);
+      if (fbo == 0) {
+         core_log(RETRO_LOG_WARN, "get_current_framebuffer returned 0, falling back to default framebuffer");
+         glBindFramebuffer(GL_FRAMEBUFFER, 0);
+         use_default_fbo = true;
+      } else {
+         glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+         GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+         if (status != GL_FRAMEBUFFER_COMPLETE) {
+            core_log(RETRO_LOG_ERROR, "Framebuffer %u incomplete (status: %d), falling back to default framebuffer", fbo, status);
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            use_default_fbo = true;
+         } else {
+            core_log(RETRO_LOG_INFO, "Successfully bound FBO: %u", fbo);
+            return true;
+         }
+      }
+   }
+   return false;
 }
 
+
 void module_opengl_set_viewport(void) {
-  GLint viewport[4];
-  glGetIntegerv(GL_VIEWPORT, viewport);
-  if (viewport[2] != HW_WIDTH || viewport[3] != HW_HEIGHT) {
-    glViewport(0, 0, HW_WIDTH, HW_HEIGHT);
-    core_log(RETRO_LOG_INFO, "Set viewport to %dx%d", HW_WIDTH, HW_HEIGHT);
-  }
-  module_opengl_check_error("glViewport");
+   glViewport(0, 0, HW_WIDTH, HW_HEIGHT);
+   core_log(RETRO_LOG_INFO, "Set viewport to %dx%d", HW_WIDTH, HW_HEIGHT);
+   module_opengl_check_error("glViewport");
 }
 
 void module_opengl_clear(void) {
-  glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-  glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-  module_opengl_check_error("glClear");
+   glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+   module_opengl_check_error("glClear");
 }
 
 void module_opengl_check_error(const char *context) {
-  GLenum err;
-  bool has_error = false;
-  while ((err = glGetError()) != GL_NO_ERROR) {
-    has_error = true;
-    core_log(RETRO_LOG_ERROR, "OpenGL error in %s: %d", context, err);
-  }
-  if (!has_error)
-    core_log(RETRO_LOG_DEBUG, "No OpenGL errors in %s", context);
+   GLenum err;
+   bool has_error = false;
+   while ((err = glGetError()) != GL_NO_ERROR) {
+      has_error = true;
+      core_log(RETRO_LOG_ERROR, "OpenGL error in %s: %d", context, err);
+   }
+   if (!has_error)
+      core_log(RETRO_LOG_DEBUG, "No OpenGL errors in %s", context);
 }
 
 bool module_opengl_is_initialized(void) {

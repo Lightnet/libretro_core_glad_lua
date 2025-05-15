@@ -412,7 +412,6 @@ bool retro_load_game(const struct retro_game_info *game) {
 
 // Run frame
 void retro_run(void) {
-  //  printf("render\n");
    if (!initialized) {
       core_log(RETRO_LOG_ERROR, "Core not initialized");
       return;
@@ -422,33 +421,24 @@ void retro_run(void) {
       core_log(RETRO_LOG_ERROR, "OpenGL not initialized, skipping frame");
       return;
    }
-  //  printf("gl_initialized\n");
 
    // Poll input
    if (input_poll_cb) {
       input_poll_cb();
-      // core_log(RETRO_LOG_DEBUG, "Input polled");
    } else {
-      // core_log(RETRO_LOG_WARN, "No input_poll_cb set");
+      core_log(RETRO_LOG_WARN, "No input_poll_cb set");
    }
 
-   // Log input state for A and B
+   // Log input state
    if (input_state_cb) {
       int a_state = input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_A);
       int b_state = input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_B);
       core_log(RETRO_LOG_DEBUG, "Direct input check: A(id=%d)=%d, B(id=%d)=%d\n",
                RETRO_DEVICE_ID_JOYPAD_A, a_state, RETRO_DEVICE_ID_JOYPAD_B, b_state);
-      for (int i = 0; i < 16; i++) {
-         int state = input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, i);
-         if (state) {
-            core_log(RETRO_LOG_DEBUG, "Joypad button id=%d pressed\n", i);
-         }
-      }
    }
 
    // Bind framebuffer
    module_opengl_bind_framebuffer();
-  //  printf("get_current_framebuffer\n");
    module_opengl_check_error("framebuffer binding");
 
    // Set viewport
@@ -458,40 +448,39 @@ void retro_run(void) {
    module_opengl_clear();
 
    // Increment animation time
-   animation_time += 0.016f; // ~60 FPS (1/60 = 0.01667)
+   animation_time += 0.016f;
 
    // Run Lua update
-    lua_State *L = module_lua_get_state();
-    if (L) {
-        module_lua_update(animation_time);
-    } else {
-        // Fallback quad drawing
-        float r = 0.0f, g = 0.5f, b = 0.0f; // Default green
-        if (input_state_cb) {
-            int a_state = input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_A);
-            int b_state = input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_B);
-            core_log(RETRO_LOG_DEBUG, "Fallback input state: A(id=%d)=%d, B(id=%d)=%d",
-                     RETRO_DEVICE_ID_JOYPAD_A, a_state, RETRO_DEVICE_ID_JOYPAD_B, b_state);
-            if (a_state)
-                g = 0.0f, b = 1.0f; // Blue
-            if (b_state)
-                r = 1.0f, g = 0.0f; // Red
-        }
+   lua_State *L = module_lua_get_state();
+   if (L) {
+      module_lua_update(animation_time);
+   } else {
+      // Fallback quad drawing
+      float r = 0.0f, g = 0.5f, b = 0.0f;
+      if (input_state_cb) {
+         int a_state = input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_A);
+         int b_state = input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_B);
+         if (a_state)
+            g = 0.0f, b = 1.0f;
+         if (b_state)
+            r = 1.0f, g = 0.0f;
+      }
 
-        float scale = 0.8f + 0.2f * sinf(animation_time * 2.0f);
-        float quad_width = HW_WIDTH * scale;
-        float quad_height = HW_HEIGHT * scale;
-        float quad_x = (HW_WIDTH - quad_width) * 0.5f;
-        float quad_y = (HW_HEIGHT - quad_height) * 0.5f;
+      float scale = 0.8f + 0.2f * sinf(animation_time * 2.0f);
+      float quad_width = HW_WIDTH * scale;
+      float quad_height = HW_HEIGHT * scale;
+      float quad_x = HW_WIDTH / 2.0f;
+      float quad_y = HW_HEIGHT / 2.0f;
+      float rotation = animation_time * 30.0f;
 
-        module_opengl_draw_solid_quad(quad_x, quad_y, quad_width, quad_height, r, g, b, 1.0f, HW_WIDTH, HW_HEIGHT);
-        module_opengl_check_error("draw_solid_quad");
-    }
+      module_opengl_draw_solid_quad(quad_x, quad_y, quad_width, quad_height, rotation, r, g, b, 1.0f, HW_WIDTH, HW_HEIGHT);
+      module_opengl_check_error("draw_solid_quad");
+   }
 
    // Log FBO binding
    GLint current_fbo;
    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &current_fbo);
-  //  core_log(RETRO_LOG_DEBUG, "Current FBO binding after rendering: %d", current_fbo);
+   core_log(RETRO_LOG_DEBUG, "Current FBO binding after rendering: %d", current_fbo);
 
    // Unbind framebuffer
    glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -499,12 +488,13 @@ void retro_run(void) {
 
    // Present frame
    if (video_cb) {
-      video_cb(RETRO_HW_FRAME_BUFFER_VALID, 960, 720, 0);
-      // core_log(RETRO_LOG_DEBUG, "Frame presented with size 960x720");
+      video_cb(RETRO_HW_FRAME_BUFFER_VALID, HW_WIDTH, HW_HEIGHT, 0);
+      core_log(RETRO_LOG_DEBUG, "Frame presented with size %dx%d", HW_WIDTH, HW_HEIGHT);
    } else {
-      // core_log(RETRO_LOG_ERROR, "No video callback set");
+      core_log(RETRO_LOG_ERROR, "No video callback set");
    }
 }
+
 
 // Load special game
 bool retro_load_game_special(unsigned game_type, const struct retro_game_info *info, size_t num_info) {
