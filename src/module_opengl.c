@@ -2,7 +2,7 @@
 #include "font.h"
 #include <stdio.h>
 #include <string.h>
-#include <cglm/cglm.h> // Include CGLM
+#include <cglm/cglm.h>
 
 // Framebuffer dimensions
 #define HW_WIDTH 512
@@ -13,15 +13,16 @@ static retro_hw_get_current_framebuffer_t get_current_framebuffer;
 static retro_hw_get_proc_address_t get_proc_address;
 static GLuint solid_shader_program = 0;
 static GLuint text_shader_program = 0;
-static GLuint vbo, vao;
-static GLuint font_texture = 0; // Font texture
+static GLuint solid_vao, text_vao; // Separate VAOs
+static GLuint vbo;
+static GLuint font_texture = 0;
 static bool gl_initialized = false;
 static bool use_default_fbo = false;
 
 // External logging function
 extern void core_log(enum retro_log_level level, const char *fmt, ...);
 
-// Solid vertex shader with MVP matrix
+// Solid vertex shader
 static const char *solid_vertex_shader_src =
    "#version 330 core\n"
    "layout(location = 0) in vec2 position;\n"
@@ -39,7 +40,7 @@ static const char *solid_fragment_shader_src =
    "   frag_color = color;\n"
    "}\n";
 
-// Text vertex shader (unchanged)
+// Text vertex shader
 static const char *text_vertex_shader_src =
    "#version 330 core\n"
    "layout(location = 0) in vec2 position;\n"
@@ -50,7 +51,7 @@ static const char *text_vertex_shader_src =
    "   v_texcoord = texcoord;\n"
    "}\n";
 
-// Text fragment shader (unchanged)
+// Text fragment shader
 static const char *text_fragment_shader_src =
    "#version 330 core\n"
    "in vec2 v_texcoord;\n"
@@ -62,42 +63,7 @@ static const char *text_fragment_shader_src =
    "   frag_color = vec4(color.rgb, color.a * alpha);\n"
    "}\n";
 
-
-// Create font texture
-static void create_font_texture(void) {
-   // Create a 760x8 texture (95 characters, each 8x8)
-   uint8_t texture_data[760 * 8] = {0};
-   const int chars_per_row = 95;
-   const int char_width = 8;
-   const int char_height = 8;
-
-   // Copy font data into texture (1 bit per pixel -> 1 byte per pixel)
-   for (int c = 0; c < 95; c++) {
-      for (int y = 0; y < 8; y++) {
-         uint8_t row = font_8x8[c][y];
-         for (int x = 0; x < 8; x++) {
-            int tex_x = c * char_width + x;
-            int tex_y = y;
-            texture_data[tex_y * 760 + tex_x] = (row & (1 << (7 - x))) ? 255 : 0;
-         }
-      }
-   }
-
-   glGenTextures(1, &font_texture);
-   glBindTexture(GL_TEXTURE_2D, font_texture);
-   glTexImage2D(GL_TEXTURE_2D, 0, GL_RED, 760, 8, 0, GL_RED, GL_UNSIGNED_BYTE, texture_data);
-   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-   glBindTexture(GL_TEXTURE_2D, 0);
-   module_opengl_check_error("create_font_texture");
-
-   core_log(RETRO_LOG_INFO, "Font texture created (760x8)");
-}
-
-
-// Create shader program
+// Create shader program (unchanged)
 static GLuint create_shader_program(const char *vs_src, const char *fs_src, const char *name) {
    GLuint vs = glCreateShader(GL_VERTEX_SHADER);
    glShaderSource(vs, 1, &vs_src, NULL);
@@ -140,17 +106,46 @@ static GLuint create_shader_program(const char *vs_src, const char *fs_src, cons
    return program;
 }
 
+// Create font texture (unchanged)
+static void create_font_texture(void) {
+   uint8_t texture_data[760 * 8] = {0};
+   const int chars_per_row = 95;
+   const int char_width = 8;
+   const int char_height = 8;
+
+   for (int c = 0; c < 95; c++) {
+      for (int y = 0; y < 8; y++) {
+         uint8_t row = font_8x8[c][y];
+         for (int x = 0; x < 8; x++) {
+            int tex_x = c * char_width + x;
+            int tex_y = y;
+            texture_data[tex_y * 760 + tex_x] = (row & (1 << (7 - x))) ? 255 : 0;
+         }
+      }
+   }
+
+   glGenTextures(1, &font_texture);
+   glBindTexture(GL_TEXTURE_2D, font_texture);
+   glTexImage2D(GL_TEXTURE_2D, 0, GL_RED, 760, 8, 0, GL_RED, GL_UNSIGNED_BYTE, texture_data);
+   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+   glBindTexture(GL_TEXTURE_2D, 0);
+   module_opengl_check_error("create_font_texture");
+
+   core_log(RETRO_LOG_INFO, "Font texture created (760x8)");
+}
 
 void module_opengl_set_callbacks(retro_hw_get_proc_address_t proc_address,
                                 retro_hw_get_current_framebuffer_t framebuffer_cb,
                                 bool *default_fbo) {
-  get_proc_address = proc_address;
-  get_current_framebuffer = framebuffer_cb;
-  use_default_fbo = *default_fbo;
-  core_log(RETRO_LOG_DEBUG, "Set OpenGL callbacks: get_proc_address=%p, get_current_framebuffer=%p, use_default_fbo=%d",
-          get_proc_address, get_current_framebuffer, use_default_fbo);
+   get_proc_address = proc_address;
+   get_current_framebuffer = framebuffer_cb;
+   use_default_fbo = *default_fbo;
+   core_log(RETRO_LOG_DEBUG, "Set OpenGL callbacks: get_proc_address=%p, get_current_framebuffer=%p, use_default_fbo=%d",
+            get_proc_address, get_current_framebuffer, use_default_fbo);
 }
-
 
 void module_opengl_init(void) {
    if (gl_initialized) {
@@ -194,19 +189,30 @@ void module_opengl_init(void) {
 
    create_font_texture();
 
-   glGenVertexArrays(1, &vao);
-   glBindVertexArray(vao);
+   // Set up VBO
    glGenBuffers(1, &vbo);
    glBindBuffer(GL_ARRAY_BUFFER, vbo);
-   glBufferData(GL_ARRAY_BUFFER, 4 * 4 * sizeof(float), NULL, GL_DYNAMIC_DRAW);
+   glBufferData(GL_ARRAY_BUFFER, 6 * 4 * sizeof(float), NULL, GL_DYNAMIC_DRAW); // Max size for text (4 floats)
 
+   // Solid VAO (position only)
+   glGenVertexArrays(1, &solid_vao);
+   glBindVertexArray(solid_vao);
+   glBindBuffer(GL_ARRAY_BUFFER, vbo);
+   glEnableVertexAttribArray(0);
+   glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void *)0);
+   glBindVertexArray(0);
+
+   // Text VAO (position + texcoord)
+   glGenVertexArrays(1, &text_vao);
+   glBindVertexArray(text_vao);
+   glBindBuffer(GL_ARRAY_BUFFER, vbo);
    glEnableVertexAttribArray(0);
    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void *)0);
    glEnableVertexAttribArray(1);
    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void *)(2 * sizeof(float)));
+   glBindVertexArray(0);
 
    glBindBuffer(GL_ARRAY_BUFFER, 0);
-   glBindVertexArray(0);
    module_opengl_check_error("init_opengl VAO setup");
 
    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
@@ -220,38 +226,107 @@ void module_opengl_init(void) {
    core_log(RETRO_LOG_INFO, "OpenGL initialized successfully");
 }
 
-
 void module_opengl_deinit(void) {
    if (gl_initialized) {
       glDeleteProgram(solid_shader_program);
       glDeleteProgram(text_shader_program);
       glDeleteTextures(1, &font_texture);
       glDeleteBuffers(1, &vbo);
-      glDeleteVertexArrays(1, &vao);
+      glDeleteVertexArrays(1, &solid_vao);
+      glDeleteVertexArrays(1, &text_vao);
       gl_initialized = false;
       core_log(RETRO_LOG_INFO, "OpenGL deinitialized");
    }
 }
 
+void module_opengl_draw_solid_quad(float x, float y, float w, float h,
+                                   float rotation, float r, float g, float b, float a,
+                                   float vp_width, float vp_height) {
+   if (!glIsProgram(solid_shader_program) || !glIsVertexArray(solid_vao) || !glIsBuffer(vbo)) {
+      core_log(RETRO_LOG_ERROR, "Invalid GL state in draw_solid_quad");
+      return;
+   }
+
+   // Define quad vertices as two triangles
+   float vertices[] = {
+      -w / 2.0f, -h / 2.0f,
+       w / 2.0f, -h / 2.0f,
+      -w / 2.0f,  h / 2.0f,
+       w / 2.0f, -h / 2.0f,
+      -w / 2.0f,  h / 2.0f,
+       w / 2.0f,  h / 2.0f
+   };
+
+   // Log vertices
+   core_log(RETRO_LOG_DEBUG, "Quad vertices: BL(%f, %f), BR(%f, %f), TL(%f, %f), TR(%f, %f)",
+            vertices[0], vertices[1], vertices[2], vertices[3], vertices[4], vertices[5], vertices[10], vertices[11]);
+
+   mat4 model, view, proj, mvp;
+   glm_mat4_identity(model);
+   glm_mat4_identity(view);
+   glm_mat4_identity(proj);
+   glm_translate(model, (vec3){x, y, 0.0f});
+   glm_rotate(model, glm_rad(rotation), (vec3){0.0f, 0.0f, 1.0f});
+   glm_ortho(-vp_width / 2.0f, vp_width / 2.0f, vp_height / 2.0f, -vp_height / 2.0f, -1.0f, 1.0f, proj);
+   glm_mat4_mul(proj, view, mvp);
+   glm_mat4_mul(mvp, model, mvp);
+
+   for (int i = 0; i < 6; i++) {
+      vec4 v = {vertices[i * 2], vertices[i * 2 + 1], 0.0f, 1.0f};
+      vec4 out;
+      glm_mat4_mulv(mvp, v, out);
+      core_log(RETRO_LOG_DEBUG, "Vertex %d transformed: (%f, %f, %f, %f)", i, out[0], out[1], out[2], out[3]);
+   }
+
+   glUseProgram(solid_shader_program);
+   glBindVertexArray(solid_vao);
+   glBindBuffer(GL_ARRAY_BUFFER, vbo);
+   glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(vertices), vertices);
+
+   GLint mvp_loc = glGetUniformLocation(solid_shader_program, "mvp");
+   glUniformMatrix4fv(mvp_loc, 1, GL_FALSE, (float *)mvp);
+
+   GLint color_loc = glGetUniformLocation(solid_shader_program, "color");
+   glUniform4f(color_loc, r, g, b, a);
+
+   glDrawArrays(GL_TRIANGLES, 0, 6);
+
+   glBindBuffer(GL_ARRAY_BUFFER, 0);
+   glBindVertexArray(0);
+   glUseProgram(0);
+   module_opengl_check_error("draw_solid_quad");
+
+   core_log(RETRO_LOG_DEBUG, "Drew solid quad at (%f, %f), size (%f, %f), rotation %f", x, y, w, h, rotation);
+}
 
 void module_opengl_draw_text(float x, float y, const char *text,
-                            float r, float g, float b, float a,
-                            float vp_width, float vp_height) {
-   if (!glIsProgram(text_shader_program) || !glIsVertexArray(vao) || !glIsBuffer(vbo) || !glIsTexture(font_texture)) {
-      core_log(RETRO_LOG_ERROR, "Invalid GL state in draw_text");
+                             float r, float g, float b, float a,
+                             float vp_width, float vp_height) {
+   if (!glIsProgram(text_shader_program) || !glIsVertexArray(text_vao) || !glIsBuffer(vbo) || !glIsTexture(font_texture)) {
+      core_log(RETRO_LOG_ERROR, "Invalid GL state in draw_text: program=%d, vao=%d, vbo=%d, texture=%d",
+               glIsProgram(text_shader_program), glIsVertexArray(text_vao), glIsBuffer(vbo), glIsTexture(font_texture));
       return;
    }
 
    glUseProgram(text_shader_program);
-   glBindVertexArray(vao);
+   glBindVertexArray(text_vao);
    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+   glActiveTexture(GL_TEXTURE0);
    glBindTexture(GL_TEXTURE_2D, font_texture);
 
-   GLint color_loc = glGetUniformLocation(text_shader_program, "color");
-   glUniform4f(color_loc, r, g, b, a);
    GLint texture_loc = glGetUniformLocation(text_shader_program, "font_texture");
+   if (texture_loc == -1) {
+      core_log(RETRO_LOG_ERROR, "Invalid uniform location for font_texture");
+      return;
+   }
    glUniform1i(texture_loc, 0);
-   glActiveTexture(GL_TEXTURE0);
+
+   GLint color_loc = glGetUniformLocation(text_shader_program, "color");
+   if (color_loc == -1) {
+      core_log(RETRO_LOG_ERROR, "Invalid uniform location for color");
+      return;
+   }
+   glUniform4f(color_loc, r, g, b, a);
 
    float char_width = 8.0f;
    float char_height = 8.0f;
@@ -260,31 +335,34 @@ void module_opengl_draw_text(float x, float y, const char *text,
 
    for (size_t i = 0; text[i]; i++) {
       unsigned char c = text[i];
-      if (c < 32 || c > 126) continue; // Skip invalid characters
-      int char_index = c - 32; // Map ASCII to font_8x8 index
+      if (c < 32 || c > 126) continue;
+      int char_index = c - 32;
 
-      // Compute texture coordinates
       float tex_x0 = (char_index * char_width) / atlas_width;
       float tex_x1 = ((char_index + 1) * char_width) / atlas_width;
       float tex_y0 = 0.0f;
       float tex_y1 = 1.0f;
 
-      // Compute screen coordinates
-      float x0 = ((x + i * char_width) / vp_width) * 2.0f - 1.0f;
-      float y0 = 1.0f - (y / vp_height) * 2.0f;
-      float x1 = ((x + i * char_width + char_width) / vp_width) * 2.0f - 1.0f;
-      float y1 = 1.0f - ((y + char_height) / vp_height) * 2.0f;
+      float px = x + i * char_width - vp_width / 2.0f;
+      float py = y - vp_height / 2.0f;
+      float px2 = px + char_width;
+      float py2 = py + char_height;
 
-      // Vertex data: [x, y, u, v] for each vertex
+      float x0 = px / (vp_width / 2.0f);
+      float y0 = -py / (vp_height / 2.0f);
+      float x1 = px2 / (vp_width / 2.0f);
+      float y1 = -py2 / (vp_height / 2.0f);
+
       float vertices[] = {
-         x0, y0, tex_x0, tex_y0, // Top-left
-         x1, y0, tex_x1, tex_y0, // Top-right
-         x0, y1, tex_x0, tex_y1, // Bottom-left
-         x1, y1, tex_x1, tex_y1  // Bottom-right
+         x0, y0, tex_x0, tex_y0,
+         x1, y0, tex_x1, tex_y0,
+         x0, y1, tex_x0, tex_y1,
+         x1, y1, tex_x1, tex_y1
       };
 
       glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(vertices), vertices);
       glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+      module_opengl_check_error("draw_text per character");
    }
 
    glBindTexture(GL_TEXTURE_2D, 0);
@@ -295,63 +373,6 @@ void module_opengl_draw_text(float x, float y, const char *text,
 
    core_log(RETRO_LOG_DEBUG, "Drew text '%s' at (%f, %f)", text, x, y);
 }
-
-
-void module_opengl_draw_solid_quad(float x, float y, float w, float h,
-                                   float rotation, float r, float g, float b, float a,
-                                   float vp_width, float vp_height) {
-   if (!glIsProgram(solid_shader_program) || !glIsVertexArray(vao) || !glIsBuffer(vbo)) {
-      core_log(RETRO_LOG_ERROR, "Invalid GL state in draw_solid_quad");
-      return;
-   }
-
-   // Define quad vertices in local space (centered at origin)
-   float vertices[] = {
-      -w / 2.0f, -h / 2.0f, // Bottom-left
-       w / 2.0f, -h / 2.0f, // Bottom-right
-      -w / 2.0f,  h / 2.0f, // Top-left
-       w / 2.0f,  h / 2.0f  // Top-right
-   };
-
-   // Set up transformation matrices
-   mat4 model, view, proj, mvp;
-   glm_mat4_identity(model);
-   glm_mat4_identity(view);
-   glm_mat4_identity(proj);
-
-   // Model matrix: translate to (x, y) and rotate
-   glm_translate(model, (vec3){x, y, 0.0f});
-   glm_rotate(model, glm_rad(rotation), (vec3){0.0f, 0.0f, 1.0f});
-
-   // Orthographic projection (centered, top-left origin for RetroArch)
-   glm_ortho(-vp_width / 2.0f, vp_width / 2.0f, vp_height / 2.0f, -vp_height / 2.0f, -1.0f, 1.0f, proj);
-
-   // Compute MVP matrix
-   glm_mat4_mul(proj, view, mvp);
-   glm_mat4_mul(mvp, model, mvp);
-
-   glUseProgram(solid_shader_program);
-   glBindVertexArray(vao);
-   glBindBuffer(GL_ARRAY_BUFFER, vbo);
-   glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(vertices), vertices);
-
-   // Set MVP matrix uniform
-   GLint mvp_loc = glGetUniformLocation(solid_shader_program, "mvp");
-   glUniformMatrix4fv(mvp_loc, 1, GL_FALSE, (float *)mvp);
-
-   GLint color_loc = glGetUniformLocation(solid_shader_program, "color");
-   glUniform4f(color_loc, r, g, b, a);
-
-   glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-
-   glBindBuffer(GL_ARRAY_BUFFER, 0);
-   glBindVertexArray(0);
-   glUseProgram(0);
-   module_opengl_check_error("draw_solid_quad");
-
-   core_log(RETRO_LOG_DEBUG, "Drew solid quad at (%f, %f), size (%f, %f), rotation %f", x, y, w, h, rotation);
-}
-
 
 bool module_opengl_bind_framebuffer(void) {
    GLuint fbo = 0;
@@ -381,20 +402,17 @@ bool module_opengl_bind_framebuffer(void) {
    return false;
 }
 
-
 void module_opengl_set_viewport(void) {
    glViewport(0, 0, HW_WIDTH, HW_HEIGHT);
    core_log(RETRO_LOG_INFO, "Set viewport to %dx%d", HW_WIDTH, HW_HEIGHT);
    module_opengl_check_error("glViewport");
 }
 
-
 void module_opengl_clear(void) {
    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
    module_opengl_check_error("glClear");
 }
-
 
 void module_opengl_check_error(const char *context) {
    GLenum err;
@@ -408,5 +426,5 @@ void module_opengl_check_error(const char *context) {
 }
 
 bool module_opengl_is_initialized(void) {
-  return gl_initialized;
+   return gl_initialized;
 }
