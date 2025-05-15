@@ -35,4 +35,9 @@ void module_opengl_check_error(const char *context);
 // Get OpenGL initialization status
 bool module_opengl_is_initialized(void);
 
+// Draw text
+void module_opengl_draw_text(float x, float y, const char *text,
+                             float r, float g, float b, float a,
+                             float vp_width, float vp_height);
+
 #endif // MODULE_OPENGL_H
