@@ -276,17 +276,8 @@ void retro_set_input_poll(retro_input_poll_t cb) {
 void retro_set_input_state(retro_input_state_t cb) {
     input_state_cb = cb;
     core_log(RETRO_LOG_INFO, "Input state callback set: %p", cb);
-    // Reinitialize Lua if it was initialized before input callback was set
-    if (module_lua_get_state() && cb) {
-        module_lua_deinit();
-        if (!module_lua_init()) {
-            core_log(RETRO_LOG_WARN, "Failed to reinitialize Lua after input callback set");
-        } else {
-            core_log(RETRO_LOG_INFO, "Lua reinitialized with input_state_cb: %p", cb);
-        }
-    }
+    // DO NOT INIT CHECK FOR LUA HERE
 }
-
 
 // Stubbed audio callbacks
 void retro_set_audio_sample(retro_audio_sample_t cb) { (void)cb; }
@@ -300,8 +291,8 @@ void retro_init(void) {
       log_cb = logging.log;
    }
    core_log(RETRO_LOG_INFO, "Hello World core initialized");
-   printf("Input constants: RETRO_DEVICE_JOYPAD=%d, A=%d, B=%d\n",
-            RETRO_DEVICE_JOYPAD, RETRO_DEVICE_ID_JOYPAD_A, RETRO_DEVICE_ID_JOYPAD_B);
+  //  printf("Input constants: RETRO_DEVICE_JOYPAD=%d, A=%d, B=%d\n",
+  //           RETRO_DEVICE_JOYPAD, RETRO_DEVICE_ID_JOYPAD_A, RETRO_DEVICE_ID_JOYPAD_B);
 }
 
 // Deinitialize core

@@ -46,6 +46,14 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(cglm)
 
+FetchContent_Declare(
+    stb
+    GIT_REPOSITORY https://github.com/nothings/stb.git
+    GIT_TAG master
+)
+FetchContent_MakeAvailable(stb)
+
+
 # Lua source files
 set(LUA_SRC
     ${lua_SOURCE_DIR}/lapi.c
@@ -96,6 +104,8 @@ add_library(lrcgl SHARED
   src/lib.c
   src/module_lua.c
   src/module_opengl.c
+  # src/module_quad2d.c
+  # src/module_text2d.c
   ${miniz_SOURCE_DIR}/miniz.c
   ${miniz_SOURCE_DIR}/miniz_tdef.c
   ${miniz_SOURCE_DIR}/miniz_tinfl.c
@@ -123,6 +133,7 @@ target_include_directories(lrcgl PRIVATE
   ${miniz_SOURCE_DIR}
   ${miniz_BINARY_DIR}
   ${cglm_SOURCE_DIR}/include
+  ${stb_SOURCE_DIR}
 )
 
 # Compile definitions
