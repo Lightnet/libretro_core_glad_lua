@@ -25,6 +25,42 @@ static int lua_core_print(lua_State *L) {
     return 0;
 }
 
+
+// Lua-exposed function: load_image(asset_name)
+static int lua_load_image(lua_State *L) {
+   const char *asset_name = luaL_checkstring(L, 1);
+   int width, height;
+   GLuint texture_id = module_opengl_load_image(asset_name, &width, &height);
+   if (texture_id == 0) {
+      lua_pushnil(L);
+      core_log(RETRO_LOG_ERROR, "Lua: Failed to load image %s", asset_name);
+   } else {
+      lua_pushinteger(L, texture_id);
+      lua_pushinteger(L, width);
+      lua_pushinteger(L, height);
+      core_log(RETRO_LOG_INFO, "Lua: Loaded image %s as texture %u (%dx%d)", asset_name, texture_id, width, height);
+   }
+   return 3; // Return texture_id, width, height
+}
+
+
+// Lua-exposed function: draw_texture(texture_id, x, y, w, h, rotation, r, g, b, a)
+static int lua_draw_texture(lua_State *L) {
+   GLuint texture_id = (GLuint)luaL_checkinteger(L, 1);
+   float x = (float)luaL_checknumber(L, 2);
+   float y = (float)luaL_checknumber(L, 3);
+   float w = (float)luaL_checknumber(L, 4);
+   float h = (float)luaL_checknumber(L, 5);
+   float rotation = (float)luaL_checknumber(L, 6);
+   float r = (float)luaL_checknumber(L, 7);
+   float g = (float)luaL_checknumber(L, 8);
+   float b = (float)luaL_checknumber(L, 9);
+   float a = (float)luaL_checknumber(L, 10);
+   module_opengl_draw_texture(texture_id, x, y, w, h, rotation, r, g, b, a, 512, 512);
+   return 0;
+}
+
+
 // Lua-exposed function: draw_quad(x, y, w, h, rotation, r, g, b, a)
 static int lua_draw_quad(lua_State *L) {
    float x = (float)luaL_checknumber(L, 1);
@@ -40,48 +76,54 @@ static int lua_draw_quad(lua_State *L) {
    return 0;
 }
 
+
+
+
+
 static int lua_draw_custom_quad(lua_State *L) {
-    // Check if the first argument is a table (vertices)
     luaL_checktype(L, 1, LUA_TTABLE);
-    float x = (float)luaL_checknumber(L, 2); // Center x
-    float y = (float)luaL_checknumber(L, 3); // Center y
-    float rotation = (float)luaL_checknumber(L, 4); // Rotation in degrees
+    float x = (float)luaL_checknumber(L, 2);
+    float y = (float)luaL_checknumber(L, 3);
+    float rotation = (float)luaL_checknumber(L, 4);
     float r = (float)luaL_checknumber(L, 5);
     float g = (float)luaL_checknumber(L, 6);
     float b = (float)luaL_checknumber(L, 7);
     float a = (float)luaL_checknumber(L, 8);
 
-    // Get the number of vertices
-    int num_vertices = lua_rawlen(L, 1);
+    lua_Unsigned num_vertices = lua_rawlen(L, 1);
     if (num_vertices < 3) {
         core_log(RETRO_LOG_ERROR, "At least 3 vertices required for custom quad");
         return 0;
     }
+    if (num_vertices > INT_MAX) {
+        core_log(RETRO_LOG_ERROR, "Number of vertices (%llu) exceeds maximum allowed (%d)", num_vertices, INT_MAX);
+        return 0;
+    }
 
-    // Allocate vertex array (2 floats per vertex: x, y)
     float *vertices = (float *)malloc(num_vertices * 2 * sizeof(float));
     if (!vertices) {
         core_log(RETRO_LOG_ERROR, "Failed to allocate memory for vertices");
         return 0;
     }
 
-    // Read vertices from Lua table
-    for (int i = 0; i < num_vertices; i++) {
-        lua_rawgeti(L, 1, i + 1); // Lua tables are 1-indexed
+    for (lua_Unsigned i = 0; i < num_vertices; i++) {
+        lua_rawgeti(L, 1, i + 1);
         luaL_checktype(L, -1, LUA_TTABLE);
-        lua_rawgeti(L, -1, 1); // x
-        lua_rawgeti(L, -2, 2); // y
+        lua_rawgeti(L, -1, 1);
+        lua_rawgeti(L, -2, 2);
         vertices[i * 2] = (float)luaL_checknumber(L, -2);
         vertices[i * 2 + 1] = (float)luaL_checknumber(L, -1);
-        lua_pop(L, 3); // Pop x, y, and vertex table
+        lua_pop(L, 3);
     }
 
-    // Call a modified OpenGL function to render the vertices
-    module_opengl_draw_custom_quad(vertices, num_vertices, x, y, rotation, r, g, b, a, 512, 512);
+    module_opengl_draw_custom_quad(vertices, (int)num_vertices, x, y, rotation, r, g, b, a, 512, 512);
 
     free(vertices);
     return 0;
 }
+
+
+
 
 
 // Lua-exposed function: draw_text(x, y, text, r, g, b, a)
@@ -160,6 +202,16 @@ static void register_libretro_constants(lua_State *L) {
 }
 
 
+// Lua-exposed function: free_texture(texture_id)
+static int lua_free_texture(lua_State *L) {
+   GLuint texture_id = (GLuint)luaL_checkinteger(L, 1);
+   module_opengl_free_texture(texture_id);
+   core_log(RETRO_LOG_INFO, "Lua: Freed texture %u", texture_id);
+   return 0;
+}
+
+
+
 bool module_lua_init(void) {
    if (L) {
       core_log(RETRO_LOG_INFO, "Lua already initialized, skipping");
@@ -185,8 +237,11 @@ bool module_lua_init(void) {
    // Register C functions
    lua_register(L, "draw_quad", lua_draw_quad);
    lua_register(L, "get_input", lua_get_input);
-   lua_register(L, "draw_text", lua_draw_text); // Add text function
+   lua_register(L, "draw_text", lua_draw_text);
    lua_register(L, "draw_custom_quad", lua_draw_custom_quad);
+   lua_register(L, "load_image", lua_load_image);
+   lua_register(L, "draw_texture", lua_draw_texture);
+   lua_register(L, "free_texture", lua_free_texture);
 
    // Register Libretro constants
    register_libretro_constants(L);
@@ -218,6 +273,7 @@ bool module_lua_init(void) {
 }
 
 
+
 bool module_lua_init_from_buffer(const char *script_data, size_t script_size) {
    if (L) {
       core_log(RETRO_LOG_INFO, "Lua already initialized, skipping");
@@ -241,7 +297,11 @@ bool module_lua_init_from_buffer(const char *script_data, size_t script_size) {
 
    lua_register(L, "draw_quad", lua_draw_quad);
    lua_register(L, "get_input", lua_get_input);
-   lua_register(L, "item_draw_text", lua_draw_text);
+   lua_register(L, "draw_text", lua_draw_text);
+   lua_register(L, "draw_custom_quad", lua_draw_custom_quad);
+   lua_register(L, "load_image", lua_load_image);
+   lua_register(L, "draw_texture", lua_draw_texture);
+   lua_register(L, "free_texture", lua_free_texture);
 
    register_libretro_constants(L);
 
@@ -267,6 +327,8 @@ bool module_lua_init_from_buffer(const char *script_data, size_t script_size) {
    core_log(RETRO_LOG_INFO, "Lua initialized and script loaded from buffer");
    return true;
 }
+
+
 
 
 void module_lua_deinit(void) {

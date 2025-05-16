@@ -22,4 +22,10 @@ void module_lua_update(float animation_time);
 // Get Lua state for external use
 lua_State *module_lua_get_state(void);
 
+// Load image and return texture ID
+int lua_load_image(lua_State *L);
+
+// Draw textured quad
+int lua_draw_texture(lua_State *L);
+
 #endif // MODULE_LUA_H

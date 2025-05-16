@@ -6,6 +6,7 @@
 #include "module_opengl.h"
 #include <miniz.h>
 #include "module_lua.h"
+#include "libretro_core.h" // Add this
 
 // Framebuffer dimensions
 #define WIDTH 320

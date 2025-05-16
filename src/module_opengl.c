@@ -1,8 +1,13 @@
+
+
 #include "module_opengl.h"
 #include "font.h"
 #include <stdio.h>
 #include <string.h>
 #include <cglm/cglm.h>
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h" // Include stb_image.h
+#include "libretro_core.h" // Add this
 
 // Framebuffer dimensions
 #define HW_WIDTH 512
@@ -13,7 +18,9 @@ static retro_hw_get_current_framebuffer_t get_current_framebuffer;
 static retro_hw_get_proc_address_t get_proc_address;
 static GLuint solid_shader_program = 0;
 static GLuint text_shader_program = 0;
-static GLuint solid_vao, text_vao; // Separate VAOs
+static GLuint texture_shader_program = 0;
+static GLuint solid_vao, text_vao, texture_vao;
+static GLuint solid_vao, text_vao;
 static GLuint vbo;
 static GLuint font_texture = 0;
 static bool gl_initialized = false;
@@ -21,6 +28,30 @@ static bool use_default_fbo = false;
 
 // External logging function
 extern void core_log(enum retro_log_level level, const char *fmt, ...);
+
+// Texture vertex shader
+static const char *texture_vertex_shader_src =
+   "#version 330 core\n"
+   "layout(location = 0) in vec2 position;\n"
+   "layout(location = 1) in vec2 texcoord;\n"
+   "out vec2 v_texcoord;\n"
+   "uniform mat4 mvp;\n"
+   "void main() {\n"
+   "   gl_Position = mvp * vec4(position, 0.0, 1.0);\n"
+   "   v_texcoord = texcoord;\n"
+   "}\n";
+
+// Texture fragment shader
+static const char *texture_fragment_shader_src =
+   "#version 330 core\n"
+   "in vec2 v_texcoord;\n"
+   "out vec4 frag_color;\n"
+   "uniform sampler2D texture_sampler;\n"
+   "uniform vec4 color;\n"
+   "void main() {\n"
+   "   vec4 tex_color = texture(texture_sampler, v_texcoord);\n"
+   "   frag_color = tex_color * color;\n"
+   "}\n";
 
 // Solid vertex shader
 static const char *solid_vertex_shader_src =
@@ -147,6 +178,111 @@ void module_opengl_set_callbacks(retro_hw_get_proc_address_t proc_address,
             get_proc_address, get_current_framebuffer, use_default_fbo);
 }
 
+
+// Load image and create OpenGL texture
+GLuint module_opengl_load_image(const char *asset_name, int *width, int *height) {
+   char *image_data = NULL;
+   size_t image_size = 0;
+
+   if (!extract_asset_from_zip(asset_name, &image_data, &image_size)) {
+      core_log(RETRO_LOG_ERROR, "Failed to extract image asset: %s", asset_name);
+      return 0;
+   }
+
+   if (image_size > INT_MAX) {
+      core_log(RETRO_LOG_ERROR, "Image size (%zu) exceeds maximum allowed (%d)", image_size, INT_MAX);
+      free(image_data);
+      return 0;
+   }
+
+   int channels;
+   stbi_set_flip_vertically_on_load(1);
+   unsigned char *data = stbi_load_from_memory((stbi_uc *)image_data, (int)image_size, width, height, &channels, 4);
+   free(image_data);
+   if (!data) {
+      core_log(RETRO_LOG_ERROR, "Failed to load image %s: %s", asset_name, stbi_failure_reason());
+      return 0;
+   }
+
+   GLuint texture;
+   glGenTextures(1, &texture);
+   glBindTexture(GL_TEXTURE_2D, texture);
+   glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, *width, *height, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
+   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+   glBindTexture(GL_TEXTURE_2D, 0);
+   module_opengl_check_error("load_image texture creation");
+
+   stbi_image_free(data);
+   core_log(RETRO_LOG_INFO, "Loaded image %s (%dx%d, channels=%d) as texture %u", asset_name, *width, *height, channels, texture);
+   return texture;
+}
+
+
+// Draw textured quad
+void module_opengl_draw_texture(GLuint texture_id, float x, float y, float w, float h,
+                                float rotation, float r, float g, float b, float a,
+                                float vp_width, float vp_height) {
+   if (!glIsProgram(texture_shader_program) || !glIsVertexArray(texture_vao) || !glIsBuffer(vbo) || !glIsTexture(texture_id)) {
+      core_log(RETRO_LOG_ERROR, "Invalid GL state in draw_texture");
+      return;
+   }
+
+   // Define quad vertices with texture coordinates
+   float vertices[] = {
+      -w / 2.0f, -h / 2.0f, 0.0f, 0.0f,
+       w / 2.0f, -h / 2.0f, 1.0f, 0.0f,
+      -w / 2.0f,  h / 2.0f, 0.0f, 1.0f,
+       w / 2.0f, -h / 2.0f, 1.0f, 0.0f,
+      -w / 2.0f,  h / 2.0f, 0.0f, 1.0f,
+       w / 2.0f,  h / 2.0f, 1.0f, 1.0f
+   };
+
+   // Log vertices
+   core_log(RETRO_LOG_DEBUG, "Texture quad vertices: BL(%f, %f), BR(%f, %f), TL(%f, %f), TR(%f, %f)",
+            vertices[0], vertices[1], vertices[4], vertices[5], vertices[8], vertices[9], vertices[20], vertices[21]);
+
+   mat4 model, view, proj, mvp;
+   glm_mat4_identity(model);
+   glm_mat4_identity(view);
+   glm_mat4_identity(proj);
+   glm_translate(model, (vec3){x, y, 0.0f});
+   glm_rotate(model, glm_rad(rotation), (vec3){0.0f, 0.0f, 1.0f});
+   glm_ortho(-vp_width / 2.0f, vp_width / 2.0f, vp_height / 2.0f, -vp_height / 2.0f, -1.0f, 1.0f, proj);
+   glm_mat4_mul(proj, view, mvp);
+   glm_mat4_mul(mvp, model, mvp);
+
+   glUseProgram(texture_shader_program);
+   glBindVertexArray(texture_vao);
+   glBindBuffer(GL_ARRAY_BUFFER, vbo);
+   glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(vertices), vertices);
+
+   GLint mvp_loc = glGetUniformLocation(texture_shader_program, "mvp");
+   glUniformMatrix4fv(mvp_loc, 1, GL_FALSE, (float *)mvp);
+
+   GLint color_loc = glGetUniformLocation(texture_shader_program, "color");
+   glUniform4f(color_loc, r, g, b, a);
+
+   GLint texture_loc = glGetUniformLocation(texture_shader_program, "texture_sampler");
+   glUniform1i(texture_loc, 0);
+
+   glActiveTexture(GL_TEXTURE0);
+   glBindTexture(GL_TEXTURE_2D, texture_id);
+
+   glDrawArrays(GL_TRIANGLES, 0, 6);
+
+   glBindTexture(GL_TEXTURE_2D, 0);
+   glBindBuffer(GL_ARRAY_BUFFER, 0);
+   glBindVertexArray(0);
+   glUseProgram(0);
+   module_opengl_check_error("draw_texture");
+
+   core_log(RETRO_LOG_DEBUG, "Drew texture %u at (%f, %f), size (%f, %f), rotation %f", texture_id, x, y, w, h, rotation);
+}
+
+
 void module_opengl_init(void) {
    if (gl_initialized) {
       core_log(RETRO_LOG_INFO, "OpenGL already initialized, skipping");
@@ -187,12 +323,18 @@ void module_opengl_init(void) {
       return;
    }
 
+   texture_shader_program = create_shader_program(texture_vertex_shader_src, texture_fragment_shader_src, "Texture");
+   if (!texture_shader_program) {
+      core_log(RETRO_LOG_ERROR, "Failed to create texture shader program");
+      return;
+   }
+
    create_font_texture();
 
    // Set up VBO
    glGenBuffers(1, &vbo);
    glBindBuffer(GL_ARRAY_BUFFER, vbo);
-   glBufferData(GL_ARRAY_BUFFER, 6 * 4 * sizeof(float), NULL, GL_DYNAMIC_DRAW); // Max size for text (4 floats)
+   glBufferData(GL_ARRAY_BUFFER, 6 * 4 * sizeof(float), NULL, GL_DYNAMIC_DRAW);
 
    // Solid VAO (position only)
    glGenVertexArrays(1, &solid_vao);
@@ -205,6 +347,16 @@ void module_opengl_init(void) {
    // Text VAO (position + texcoord)
    glGenVertexArrays(1, &text_vao);
    glBindVertexArray(text_vao);
+   glBindBuffer(GL_ARRAY_BUFFER, vbo);
+   glEnableVertexAttribArray(0);
+   glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void *)0);
+   glEnableVertexAttribArray(1);
+   glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void *)(2 * sizeof(float)));
+   glBindVertexArray(0);
+
+   // Texture VAO (position + texcoord)
+   glGenVertexArrays(1, &texture_vao);
+   glBindVertexArray(texture_vao);
    glBindBuffer(GL_ARRAY_BUFFER, vbo);
    glEnableVertexAttribArray(0);
    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void *)0);
@@ -226,18 +378,29 @@ void module_opengl_init(void) {
    core_log(RETRO_LOG_INFO, "OpenGL initialized successfully");
 }
 
+
+
+
+// Modify module_opengl_deinit to clean up texture shader and VAO
 void module_opengl_deinit(void) {
    if (gl_initialized) {
       glDeleteProgram(solid_shader_program);
       glDeleteProgram(text_shader_program);
+      glDeleteProgram(texture_shader_program);
       glDeleteTextures(1, &font_texture);
       glDeleteBuffers(1, &vbo);
       glDeleteVertexArrays(1, &solid_vao);
       glDeleteVertexArrays(1, &text_vao);
+      glDeleteVertexArrays(1, &texture_vao);
       gl_initialized = false;
       core_log(RETRO_LOG_INFO, "OpenGL deinitialized");
    }
 }
+
+
+
+
+
 
 void module_opengl_draw_solid_quad(float x, float y, float w, float h,
                                    float rotation, float r, float g, float b, float a,
@@ -448,12 +611,12 @@ bool module_opengl_bind_framebuffer(void) {
    GLuint fbo = 0;
    if (use_default_fbo || !get_current_framebuffer) {
       glBindFramebuffer(GL_FRAMEBUFFER, 0);
-      core_log(RETRO_LOG_INFO, "Using default framebuffer (0)");
+      // core_log(RETRO_LOG_INFO, "Using default framebuffer (0)");
    } else {
       fbo = (GLuint)(uintptr_t)(get_current_framebuffer());
-      core_log(RETRO_LOG_INFO, "get_current_framebuffer returned FBO: %u", fbo);
+      // core_log(RETRO_LOG_INFO, "get_current_framebuffer returned FBO: %u", fbo);
       if (fbo == 0) {
-         core_log(RETRO_LOG_WARN, "get_current_framebuffer returned 0, falling back to default framebuffer");
+        //  core_log(RETRO_LOG_WARN, "get_current_framebuffer returned 0, falling back to default framebuffer");
          glBindFramebuffer(GL_FRAMEBUFFER, 0);
          use_default_fbo = true;
       } else {
@@ -464,7 +627,7 @@ bool module_opengl_bind_framebuffer(void) {
             glBindFramebuffer(GL_FRAMEBUFFER, 0);
             use_default_fbo = true;
          } else {
-            core_log(RETRO_LOG_INFO, "Successfully bound FBO: %u", fbo);
+            // core_log(RETRO_LOG_INFO, "Successfully bound FBO: %u", fbo);
             return true;
          }
       }
@@ -474,7 +637,7 @@ bool module_opengl_bind_framebuffer(void) {
 
 void module_opengl_set_viewport(void) {
    glViewport(0, 0, HW_WIDTH, HW_HEIGHT);
-   core_log(RETRO_LOG_INFO, "Set viewport to %dx%d", HW_WIDTH, HW_HEIGHT);
+  //  core_log(RETRO_LOG_INFO, "Set viewport to %dx%d", HW_WIDTH, HW_HEIGHT);
    module_opengl_check_error("glViewport");
 }
 
@@ -483,6 +646,20 @@ void module_opengl_clear(void) {
    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
    module_opengl_check_error("glClear");
 }
+
+
+
+void module_opengl_free_texture(GLuint texture_id) {
+   if (glIsTexture(texture_id)) {
+      glDeleteTextures(1, &texture_id);
+      core_log(RETRO_LOG_INFO, "Freed texture %u", texture_id);
+   } else {
+      core_log(RETRO_LOG_WARN, "Attempted to free invalid texture %u", texture_id);
+   }
+}
+
+
+
 
 void module_opengl_check_error(const char *context) {
    GLenum err;

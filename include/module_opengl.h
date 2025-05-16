@@ -45,4 +45,15 @@ void module_opengl_draw_text(float x, float y, const char *text,
                              float r, float g, float b, float a,
                              float vp_width, float vp_height);
 
+// Load image from data and create OpenGL texture
+GLuint module_opengl_load_image(const char *asset_name, int *width, int *height);
+
+// Draw textured quad
+void module_opengl_draw_texture(GLuint texture_id, float x, float y, float w, float h,
+                                float rotation, float r, float g, float b, float a,
+                                float vp_width, float vp_height);
+
+// Free OpenGL texture
+void module_opengl_free_texture(GLuint texture_id);
+
 #endif // MODULE_OPENGL_H
